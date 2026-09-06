@@ -1,12 +1,13 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.3.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.4.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Features
 
 - Visible Plex tab with browser sign-in, server discovery, and one-step connection/import. Manual URL/token setup is available under Advanced connection.
+- Android Auto media browsing, playback, voice search, four radio modes, and queued rating controls. See setup below for sideloaded APKs.
 - Original-quality Plex streaming and bulk downloads, with background playback, notification/headset controls, next, previous, seeking, and a playback queue.
 - Direct download/remove buttons on each track and each artist, album, or genre. Downloads → On device supports filtering and reviewed removal of one track, selected tracks, a whole artist/album/genre, everything below a chosen rating, or all downloaded files.
 - Offline-only mode: plays downloaded and manually added files. Choose a dedicated folder using Android's folder picker. Copy your own files into that folder or subfolders and scan it.
@@ -29,7 +30,7 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.3.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install `Offline-Plex-Music-0.4.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
@@ -48,6 +49,26 @@ After a task finishes, another group is selected randomly. The immediately previ
 Plex token help: [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
 For the example “rate an artist one star and remove them”: open Artists, select that artist's checkbox, choose Rate → 1★, optionally choose Sync ratings and review it, then choose Delete and review device/Plex targets. Alternatively, open that artist and use Clean 1★. A deletion does not automatically sync ratings first.
+
+## Android Auto
+
+1. Install the APK on your phone and finish Plex connection/import or scan local music before driving.
+2. Because this APK comes from GitHub, enable **Unknown sources** in Android Auto's developer settings if it is missing from the car launcher. Open Android Auto settings, expand the version information, tap it ten times, accept developer mode, then open the overflow menu → Developer settings → Unknown sources. Reconnect Android Auto and check Customize launcher. See [Google's sideload testing instructions](https://developer.android.com/training/cars/testing#unknown-sources).
+3. Open **Offline Plex music** on the car display. The four sections are **Library**, **Downloads**, **Playlists**, and **Radio**. Library contains artists, albums, genres, and tracks. Downloads includes your own scanned files.
+4. Use the car's play/pause, next/previous, seek, and voice-search controls. Previous follows normal Android media behavior: after a few seconds it restarts the current song; press again to go to the previous song. Phone controls retain their direct previous-track behavior.
+5. Radio uses the phone's **2 Track limit** setting. The custom **Rate 1 star** and **Rate 5 stars** actions, plus star ratings from hosts that expose them, save on the phone. **Sync ratings** remains manual on the phone. Available custom-action placement depends on your car host.
+
+Offline mode applies to car browsing, search, and radio. The car interface uses your cached library and can start before the phone UI opens. Set up Plex, manage downloads, sync ratings, and review deletions on the phone. This is Android Auto projection from your phone, not a separate app installed into Android Automotive OS.
+
+Large browse lists use range folders of at most 100 items. Car search returns up to 100 matches; narrow the query for more specific results. A sequential car queue contains up to 500 tracks around the selected song; radio continues selecting new groups. A physical Android Auto head unit / Desktop Head Unit session has not been available for visual verification. Automated tests exercise both the Android platform browser/transport bridge used by car hosts and the Media3 browser.
+
+## Reuse downloads from other apps
+
+Select an accessible folder with **Settings → Choose folder**, then **Scan folder**. The app reads audio files in place and includes subfolders; it does not copy them. This also sets the destination for future downloads.
+
+Plezy supports a custom shared download folder; music in such a folder can be scanned. Plezy's default storage is app-private, and Plex's private offline cache is generally unavailable to another app. Android 11+ prevents the system folder picker from granting access to other apps' `Android/data` folders. See [Plezy's storage implementation](https://github.com/edde746/plezy/blob/main/lib/services/download_storage_service.dart) and [Android's folder restrictions](https://developer.android.com/training/data-storage/shared/documents-files#document-tree-access-restrictions).
+
+Scanning imports audio files as local tracks; it does not import Plezy/Plex download databases, playlists, or Plex track identities. Ratings on these scanned tracks stay local. Deleting a scanned file removes the original file from that shared folder, so the other app will lose that copy too. No files on the user's phone were inspected during development.
 
 ## Build and verification
 

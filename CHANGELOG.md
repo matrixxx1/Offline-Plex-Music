@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Add Android Auto discovery with an exported MediaLibraryService and the platform media-browser bridge.
+- Browse Library, Downloads, Playlists, and Radio from the car, including artists, albums, genres, own files, and all four random modes.
+- Add voice search, selected-playlist queues, playback resumption, and standard car transport controls.
+- Expose queued one-star/five-star actions and star-rating requests. Car ratings remain local until manual sync on the phone.
+- Apply offline filtering and the existing two-track setting in the car. Refresh subscribed car folders when the library changes.
+- Use range folders for large catalogs and resolve playback only from known library IDs.
+- Document Android Auto setup for GitHub APKs and limits on reusing Plezy/Plex downloads.
+
 ## 0.3.0
 
 - Rename the launcher, app header, notifications, and Plex product name to Offline Plex music. Keep the same application ID and upgrade path.

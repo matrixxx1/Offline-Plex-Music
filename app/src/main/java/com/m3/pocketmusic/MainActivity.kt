@@ -319,7 +319,11 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("A dot beside a rating means it is waiting to sync. Sync is always manual. Select an artist, album, genre, playlist, or individual tracks to rate, download, or delete in bulk. Clean 1★ reviews one-star tracks in your current view, including queued ratings.", fontSize = 13.sp)
         Text("Plex deletion removes the server’s media file, and requires an account with deletion permission plus Allow media deletion in Plex settings. The review asks you to choose this device, Plex, or both.", fontSize = 13.sp)
         TextButton(onClick = discard, enabled = !busy && state.tracks.any { it.pendingRating != null }) { Text("Discard queued Plex ratings") }
-        Text("Offline Plex music 0.3.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        HorizontalDivider()
+        Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
+        Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
+        Text("Offline Plex music 0.4.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {
