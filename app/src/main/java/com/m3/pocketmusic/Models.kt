@@ -9,7 +9,8 @@ data class Track(
     val duration: Long = 0, val remoteKey: String = "", val part: String = "",
     val extension: String = "mp3", val localUri: String = "", val serverRating: Int = 0,
     val localRating: Int = 0, val pendingRating: Int? = null, val bytes: Long = 0,
-    val exactPlexRating: Double? = null
+    val exactPlexRating: Double? = null,
+    val moods: List<String> = emptyList(), val styles: List<String> = emptyList()
 ) {
     val rating get() = pendingRating ?: if (remoteKey.isNotBlank()) serverRating else localRating
     val downloaded get() = localUri.isNotBlank()

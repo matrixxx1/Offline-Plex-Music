@@ -1,26 +1,21 @@
-# Offline Plex Music 0.5.0 validation
+# Offline Plex Music 0.6.0 validation
 
-Verified locally on 2026-09-06.
+Verified locally on 2026-09-06 with `build.ps1 -Tasks testDebugUnitTest,lintDebug,assembleDebug,connectedDebugAndroidTest`.
 
-- APK: `Offline-Plex-Music-0.5.0.apk`, debug-signed, Android 8.0+.
-- SHA-256: `5BAE1FCFA328B93D4D7785ED8073351E26D33FC48362E41C862D4E41538C679E`.
-- Android APK signature verification passed (v2 signature).
-- 51 JVM tests passed: 8 car catalog tests, 8 download-filter/threshold tests, 8 radio-planning, 9 rating/persistence/cleanup, 5 Plex server API, 5 Plex account API contract tests, and 8 login-recovery tests.
-- 14 Android 14 emulator integration tests passed on the dedicated `PocketMusic_Test` AVD.
-- Car catalog coverage includes four root sections, all radio modes, offline and downloaded-file filtering, playlist order and selection, Unicode IDs, voice query matching, malformed-ID rejection, and complete range-folder coverage of 10,005 tracks.
-- Platform MediaBrowser/MediaController tests start the service without opening a phone activity; browse playlists; play, pause, seek, skip, and stop; queue and persist ratings without syncing; play from voice search; and start offline album radio with the two-track setting retained.
-- A Media3 browser test searches, resolves the selected result into playable audio, and verifies an arbitrary external URI is rejected. Android Auto discovery metadata and the exported browser service are asserted as well.
-- No physical Android Auto head unit or Desktop Head Unit projection was available. Host-specific UI, voice recognition, and custom-action placement remain to be checked in a vehicle. The tests exercise the media-browser/transport protocol, not a simulated car screenshot.
-- New emulator tests verify the launcher name and visible first-run connection controls, and enter a server URL/token through the Plex screen, import music, and stream the imported track. The fixture verifies that import preserves a queued rating and makes only GET requests.
-- Account contract tests verify strong PIN creation, consistent client identification, browser URL encoding, pending/claimed PIN responses, header-only account tokens, server-specific tokens, HTTPS preference, rejected malformed addresses, and actionable HTTP errors.
-- Live unauthenticated PIN creation on plex.tv and lookup of the same PIN on clients.plex.tv succeeded. The test PIN remained unclaimed; no user account was accessed. Alternate-host fallback retains HTTPS certificate verification and is limited to DNS/connection failures.
-- Login recovery tests cover retrying the same PIN, retaining authorization before server discovery, transient DNS/HTTP retries, expiration, invalid credentials, cancellation, and TLS failures. Android tests verify encrypted PIN/token persistence across activity/ViewModel recreation, recovery controls, and resetting sign-in without erasing the saved server or queued ratings.
-- The reported phone DNS failure was not reproduced on that physical phone. The update preserves login progress through network failures; it cannot guarantee resolution of device, VPN, or carrier DNS problems.
-- Emulator coverage includes HTTP audio streaming, bulk downloads with byte-for-byte verification, Android document-folder access, scanning manually added audio, selective local deletion, manual rating queue persistence, playlist creation, offline filtering/playback, and playback advancing while the activity is in the background.
-- New coverage verifies direct download and removal controls, artist/group cleanup reviews, strict rating thresholds with optional unrated/own-file inclusion, removal of all local music, and preservation of Plex metadata and queued ratings after local removal.
-- Android lint: 0 errors, 15 warnings. Warnings concern the target API/dependency versions, backup configuration, optional Kotlin conveniences, and exposed media-search service permissions.
-- Screenshots in `screenshots/` are from the emulator using clearly synthetic song metadata and generated silent WAV files. They are UI examples, not a user's Plex library.
+- APK: `Offline-Plex-Music-0.6.0.apk`, debug-signed, Android 8.0+.
+- SHA-256: `675C1465FFBA1FF1F7EEC2D7AEF59800F01D55BCD1D627447CC9F70920D2DEAC`.
+- APK v2 signature verified with the same certificate as prior releases.
+- 61 JVM tests passed: 9 smart-download, 8 car catalog, 8 download-filter, 8 radio, 9 rating/persistence, 6 Plex server API, 5 Plex account API, and 8 login-recovery tests.
+- 16 Android 14 emulator integration tests passed on the dedicated `PocketMusic_Test` AVD.
+- Android lint: zero errors, 15 warnings (existing API/dependency, backup, Kotlin convenience, and media-search service items).
+- Smart-download tests cover independent per-artist/per-genre sampling, short groups, overlapping genres with deduplication, total limits, exact group matches, separate albums with identical titles, and excluding local/downloaded/queued/unavailable files. Fixed random seeds verify reproducibility and reshuffling.
+- Tag tests cover track/album/artist inheritance, normalization and blank removal, missing metadata, JSON persistence, and reading older libraries without losing ratings or local file links. Fixture requests retain Media/Part data and only use GET.
+- Android tests select per-genre counts, reject invalid counts and empty selections, search for an existing Happy mood, review the exact matching songs, and exclude individual songs without changing library ratings or queuing downloads.
+- A complete per-artist download runs through the new UI against a local HTTP audio fixture. It skips the already-downloaded song and verifies the downloaded bytes. Existing scan/local deletion checks verify queued ratings and remote media remain intact.
+- Reviewed current emulator screenshots: `screenshots/smart-download-setup.png` and `screenshots/smart-download-moods.png`. All songs, metadata and media in tests are synthetic. The count field dismisses its keyboard with Done and the picker accommodates keyboard insets.
+- Existing login-recovery tests still cover encrypted PIN/token persistence, DNS/HTTP retries, expiry, invalid tokens, cancellation, and TLS errors. Existing streaming, radio in background, playlists, manual ratings, and download cleanup tests passed.
+- Existing Android Auto tests cover platform and Media3 browsing/search/playback/ratings without opening a phone activity. No physical car head unit or Desktop Head Unit projection was available; host-specific UI remains unverified.
 
-Reproduce with `build.ps1`; run `build.ps1 -Tasks connectedDebugAndroidTest` with an emulator available for the device tests. Reports are under `%LOCALAPPDATA%\PocketMusic-build\app\reports`.
+No user Plex server or phone files were accessed during this change. Mood/style availability depends on metadata returned by the user's Plex server; no moods were inferred or written back. Refresh music after upgrading to populate the new tag fields. Smart counts mean new downloads per selected group, not a target total already on the device. A song may match several groups but is queued only once.
 
-No user Plex server was accessed. Real-server authentication, actual music formats, account/server permissions, and permanent Plex deletion remain unverified. The API deletion tests use a local fixture and verify that only reviewed music-track endpoints can receive DELETE requests. No real music was deleted.
+Reports are under `%LOCALAPPDATA%\PocketMusic-build\app\reports`. GitHub branch and tag CI and the released APK download/checksum are verified separately before publishing.

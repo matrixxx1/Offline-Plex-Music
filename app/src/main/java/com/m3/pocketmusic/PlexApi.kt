@@ -56,14 +56,18 @@ class PlexApi(val config: PlexConfig) {
         val tracks = mutableListOf<Track>()
         for (section in sections) {
             val root = "/library/sections/${encode(section.getString("key"))}/all"
-            progress("Reading ${section.optString("title")} artists and genres")
-            val artists = pages("$root?type=8").associateBy { it.getString("ratingKey") }
-            val albums = pages("$root?type=9").associateBy { it.getString("ratingKey") }
-            val rows = pages("$root?type=10") { progress("${section.optString("title")}: $it tracks loaded") }
+            progress("Reading ${section.optString("title")} artists, genres and moods")
+            // Include optional tags without excluding Media/Part data needed for downloads.
+            val tagParams = "includeOptionalElements=Genre,Mood,Style"
+            val artists = pages("$root?type=8&$tagParams").associateBy { it.getString("ratingKey") }
+            val albums = pages("$root?type=9&$tagParams").associateBy { it.getString("ratingKey") }
+            val rows = pages("$root?type=10&$tagParams") { progress("${section.optString("title")}: $it tracks loaded") }
             tracks += rows.filter { it.optString("type") == "track" }.map { row ->
                 val track = parseTrack(row)
-                val inherited = genres(albums[track.albumId]) + genres(artists[track.artistId])
-                track.copy(genres = (track.genres + inherited).distinctBy { it.lowercase() })
+                val album = albums[track.albumId]; val artist = artists[track.artistId]
+                track.copy(genres = cleanTags(track.genres + tags(album, "Genre") + tags(artist, "Genre")),
+                    moods = cleanTags(track.moods + tags(album, "Mood") + tags(artist, "Mood")),
+                    styles = cleanTags(track.styles + tags(album, "Style") + tags(artist, "Style")))
             }
         }
         return tracks.distinctBy { it.id }
@@ -102,11 +106,13 @@ class PlexApi(val config: PlexConfig) {
         return Track(id = "plex:${config.serverId}:$key", title = o.optString("title", "Untitled"),
             artist = o.optString("grandparentTitle", "Unknown artist"), album = o.optString("parentTitle", "Unknown album"),
             albumId = o.optString("parentRatingKey"), artistId = o.optString("grandparentRatingKey"),
-            genres = genres(o), disc = o.optInt("parentIndex", 1), number = o.optInt("index"), duration = o.optLong("duration"),
+            genres = tags(o, "Genre"), moods = tags(o, "Mood"), styles = tags(o, "Style"),
+            disc = o.optInt("parentIndex", 1), number = o.optInt("index"), duration = o.optLong("duration"),
             remoteKey = key, part = part?.optString("key").orEmpty(), extension = media?.optString("container", "mp3") ?: "mp3",
             serverRating = (o.optDouble("userRating", 0.0) / 2).roundToInt().coerceIn(0, 5), bytes = part?.optLong("size") ?: 0,
             exactPlexRating = o.optDouble("userRating", 0.0))
     }
-    private fun genres(o: JSONObject?) = o?.optJSONArray("Genre")?.objects()?.map { it.optString("tag") }?.filter { it.isNotBlank() }.orEmpty()
+    private fun tags(o: JSONObject?, field: String) = cleanTags(o?.optJSONArray(field)?.objects()?.map { it.optString("tag") }.orEmpty())
+    private fun cleanTags(values: List<String>) = values.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase(java.util.Locale.ROOT) }
     companion object { fun encode(value: String): String = URLEncoder.encode(value, "UTF-8") }
 }

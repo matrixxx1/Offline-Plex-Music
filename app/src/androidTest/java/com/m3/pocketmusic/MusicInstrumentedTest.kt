@@ -163,6 +163,8 @@ class MusicInstrumentedTest {
             val tracks = (1..2).map { Track("download:$it", "Download $it", remoteKey = it.toString(), part = "/audio/$it.wav", extension = "wav", bytes = audio.size.toLong()) }
             store.update { LibraryState(tracks = tracks, folder = tree.toString()) }
             compose.runOnUiThread { PlaybackService.instance?.reloadConnection() }
+            compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+            compose.activityRule.scenario.recreate()
             compose.onNodeWithText("Download 1", useUnmergedTree = true).performClick()
             compose.waitUntil(15_000) { PlaybackService.status.value.playing }
             assertTrue(requests.any { it.startsWith("GET /audio/1.wav") })
@@ -171,7 +173,16 @@ class MusicInstrumentedTest {
             compose.onNodeWithTag("track-download-download:1").performClick()
             compose.waitUntil(30_000) { store.state.value.tracks.first().downloaded || store.state.value.downloads.any { it.state == "Failed" } }
             assertTrue(store.state.value.downloads.toString(), store.state.value.tracks.first().downloaded)
-            compose.runOnUiThread { vm.downloads(tracks.map { it.id }.toSet()) }
+            // Complete the second download through the reviewed per-artist smart picker.
+            compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("Smart download from Plex").performClick()
+            compose.onNodeWithTag("smart-category-ARTIST").performScrollTo().performClick()
+            compose.onNodeWithTag("smart-amount-group").performScrollTo().performClick()
+            compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("1")
+            compose.onNodeWithTag("smart-preview").performClick()
+            compose.onNodeWithTag("smart-track-download:1").assertDoesNotExist()
+            compose.onNodeWithTag("smart-track-download:2").assertExists()
+            compose.onNodeWithTag("smart-download-confirm").performClick()
             compose.waitUntil(30_000) { store.state.value.tracks.all { it.downloaded } || store.state.value.downloads.any { it.state == "Failed" } }
             assertEquals(store.state.value.downloads.toString(), 2, store.state.value.tracks.count { it.downloaded })
             assertEquals(2, folder.listFiles().size)
@@ -197,6 +208,58 @@ class MusicInstrumentedTest {
             assertEquals(2, store.state.value.tracks.size)
             assertTrue(store.state.value.tracks.none { it.downloaded })
         } finally { socket.close(); thread.join(1000) }
+    }
+    @Test fun smartDownloadReviewsGenreSamplesAndSelectsExistingMoodTags() {
+        val tracks = (1..6).map { n -> Track("smart:$n", "Sample song $n", "Artist ${if (n <= 3) "A" else "B"}", "Sample Album",
+            remoteKey = "$n", part = "/audio/$n", genres = listOf(if (n <= 3) "Rock" else "Jazz"),
+            moods = listOf(if (n % 2 == 0) "Happy" else "Sad"), bytes = 4_000_000, pendingRating = 1) }
+        store.update { LibraryState(tracks = tracks) }
+        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Smart download from Plex").performClick()
+        compose.onNodeWithTag("smart-category-GENRE").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-amount-group").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("1")
+        compose.onNodeWithTag("smart-count").performImeAction()
+        screenshot("smart-download-setup")
+        compose.onNodeWithTag("smart-preview").performClick()
+        compose.onNodeWithText("Download 2 songs").assertExists()
+        val previewIds = tracks.filter { compose.onAllNodesWithTag("smart-track-${it.id}").fetchSemanticsNodes().isNotEmpty() }.map { it.id }
+        assertEquals(2, previewIds.size)
+        assertEquals(2, tracks.filter { it.id in previewIds }.map { it.genres.first() }.distinct().size)
+        compose.onNodeWithTag("smart-track-${previewIds.first()}").performClick()
+        compose.onNodeWithText("Download 1 songs").assertExists()
+        compose.onNodeWithText("← Edit selection").performClick()
+        compose.onNodeWithTag("smart-category-MOOD").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-choose-groups").performScrollTo().performClick()
+        compose.onNodeWithText("Clear", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("smart-group-search").performTextInput("Hap")
+        compose.onNodeWithText("Happy", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Done", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("smart-amount-all").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-preview").performClick()
+        compose.onNodeWithText("Download 3 songs").assertExists()
+        compose.onNodeWithTag("smart-track-smart:1").assertDoesNotExist()
+        compose.onNodeWithTag("smart-track-smart:2").assertExists()
+        compose.onNodeWithTag("smart-download-confirm").assertIsNotEnabled()
+        screenshot("smart-download-moods")
+        assertTrue(store.state.value.downloads.isEmpty())
+        assertTrue(store.state.value.tracks.all { it.pendingRating == 1 && !it.downloaded })
+    }
+    @Test fun smartDownloadRejectsInvalidCountsAndEmptyGroupSelection() {
+        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Smart download from Plex").performClick()
+        compose.onNodeWithTag("smart-amount-total").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("0")
+        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
+        compose.onNodeWithTag("smart-count").performTextReplacement("2")
+        compose.onNodeWithTag("smart-category-GENRE").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-choose-groups").performScrollTo().performClick()
+        compose.onNodeWithText("Clear", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Done", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
+        compose.onNodeWithTag("smart-category-MOOD").performScrollTo().performClick()
+        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
+        assertTrue(store.state.value.downloads.isEmpty())
     }
     @Test fun savedPlexLoginSurvivesRecreationEncryptedAndCanResetIndependently() {
         val savedServer = PlexConfig("https://unit.invalid", "test-existing-server-token", "test-existing-server")

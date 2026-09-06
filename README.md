@@ -1,6 +1,6 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.5.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.6.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -9,6 +9,7 @@ A native Kotlin/Compose music player for a Plex music library and a folder of lo
 - Visible Plex tab with browser sign-in, server discovery, and one-step connection/import. Manual URL/token setup is available under Advanced connection.
 - Android Auto media browsing, playback, voice search, four radio modes, and queued rating controls. See setup below for sideloaded APKs.
 - Original-quality Plex streaming and bulk downloads, with background playback, notification/headset controls, next, previous, seeking, and a playback queue.
+- Smart downloads by genre, artist, album, or existing Plex mood/style tags: whole groups, a random total, or X new songs per group, with an editable preview and size estimate.
 - Direct download/remove buttons on each track and each artist, album, or genre. Downloads → On device supports filtering and reviewed removal of one track, selected tracks, a whole artist/album/genre, everything below a chosen rating, or all downloaded files.
 - Offline-only mode: plays downloaded and manually added files. Choose a dedicated folder using Android's folder picker. Copy your own files into that folder or subfolders and scan it.
 - Track, artist, album, genre, and playlist browsing; search and select-all apply to the current view. Artist/album/genre checkboxes select the entire group for bulk operations.
@@ -30,7 +31,7 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.5.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install `Offline-Plex-Music-0.6.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
@@ -43,7 +44,22 @@ If the browser says you successfully signed in but the app cannot resolve or rea
 
 The app retries temporary network/server errors and can use Plex's alternate HTTPS API host when the primary host fails DNS resolution or connection. It never disables certificate verification or changes phone network settings. If access remains blocked, try Wi-Fi or check mobile-data/VPN access for this app, then retry. An expired PIN or revoked account token requires a new sign-in; ordinary connection failures do not. **Start a new sign-in / change account** clears saved sign-in recovery state while preserving your server configuration, library, downloads, and queued ratings.
 
-Version 0.4.0 and earlier did not save unfinished logins, so an already-lost login cannot be recovered after upgrading. Begin one new sign-in on 0.5.0; subsequent retries preserve it.
+Version 0.4.0 and earlier did not save unfinished logins, so an already-lost login cannot be recovered after upgrading. Begin one new sign-in on 0.5.0 or newer; subsequent retries preserve it.
+
+### Smart downloads
+
+Open **Downloads → Smart download from Plex**, or use the same button on your saved Plex connection.
+
+1. Choose **All music**, **Genres**, **Artists**, **Albums**, **Moods**, or **Styles**. For groups, use the chooser to search and select one, several, or all groups. Choices come from Plex songs still available to download; blank and duplicate tags are omitted.
+2. Choose **All matching songs**, **Random songs, total**, or **Random songs per genre/artist/album/mood/style**, then enter X. For example: Genres → all genres → Random songs per genre → 10. Artists → selected artists → Random songs per artist → 5. Albums → selected albums → All matching songs downloads the remaining songs from those albums.
+3. Tap **Preview downloads** to see the actual songs and estimated original-file size. Unknown sizes are labeled. Uncheck individual songs to leave them out or use **Reshuffle preview** for another random sample.
+4. Choose a download folder if needed, then tap **Download N songs**. Transfers use the existing durable queue, progress notification, and pause/retry controls.
+
+Counts mean **new downloads**, not a target total on the device. Existing downloads and queued jobs (including failed jobs awaiting retry) are skipped. Per-group sampling selects up to X songs independently from each selected group; smaller groups contribute what they have. A track shared by several genres/tags downloads once, so the total can be less than X times the number of groups. Overlapping tags may make a group appear on more than X of the final songs. The preview stays fixed until you edit or reshuffle it; confirming never silently substitutes different songs.
+
+After upgrading, tap **Refresh Plex music & tags** once to import mood/style metadata. The app uses existing tags Plex returns for tracks, albums, and artists; album/artist tags include their tracks. Happy, angry, and sad appear only if those tags exist in the returned library metadata. The app does not infer moods, create tags, or write them back to Plex. Availability and completeness depend on your Plex library and server metadata. See the [Plex API response customization documentation](https://developer.plex.tv/pms/) and the [PlexAPI audio metadata implementation](https://github.com/pushingkarmaorg/python-plexapi/blob/master/plexapi/audio.py).
+
+Smart download selection runs locally on imported metadata and can be previewed offline. Starting transfers requires online mode and a saved Plex connection. It does not sync ratings, delete files, or change your radio playback mode.
 
 ### Manage downloaded music
 

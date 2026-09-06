@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@Composable fun PlexScreen(vm: MusicViewModel, state: LibraryState, busy: Boolean, openLibrary: () -> Unit, chooseFolder: () -> Unit) {
+@Composable fun PlexScreen(vm: MusicViewModel, state: LibraryState, busy: Boolean, openLibrary: () -> Unit, chooseFolder: () -> Unit, smartDownload: () -> Unit) {
     val context = LocalContext.current
     val connection by vm.connection.collectAsStateWithLifecycle()
     val servers by vm.servers.collectAsStateWithLifecycle()
@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
                 Text("${state.tracks.count { it.remoteKey.isNotBlank() }} Plex tracks in your library", fontSize = 13.sp)
                 Button(onClick = { vm.refresh() }, enabled = !busy && !state.offline) { Text("Import / refresh music") }
                 OutlinedButton(onClick = openLibrary) { Text("Open library to play") }
+                OutlinedButton(onClick = smartDownload) { Text("Smart download from Plex") }
             } }
         }
         if (login.pending) {

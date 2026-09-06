@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
     val playing by PlaybackService.status.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf("Library") }
+    var smartDownload by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("Tracks") }
     var groupValue by remember { mutableStateOf<String?>(null) }
@@ -144,7 +145,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             when (tab) {
-                "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) })
+                "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) }, { tab = "Downloads"; smartDownload = true })
                 "Library" -> {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { tab = "Plex" }) { Text(if (connection.serverId.isBlank()) "Connect Plex" else "Plex connection") }
@@ -218,7 +219,9 @@ class MainActivity : ComponentActivity() {
                         }
                     } }
                 }
-                "Downloads" -> DownloadsScreen(state, busy, vm) { removeDownloadIds = it }
+                "Downloads" -> if (smartDownload) SmartDownloadScreen(state, busy, connection.serverId.isNotBlank(),
+                    { smartDownload = false }, vm::refresh, { folderPicker.launch(null) }, ::download)
+                else DownloadsScreen(state, busy, vm, { smartDownload = true }) { removeDownloadIds = it }
                 "Settings" -> Settings(vm, state, busy, { folderPicker.launch(null) }, { showDiscard = true })
             }
         }
@@ -323,7 +326,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.5.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.6.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

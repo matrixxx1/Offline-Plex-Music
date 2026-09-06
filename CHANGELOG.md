@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Add Smart download from the Downloads and Plex screens, with genre, artist, album, mood, and style selection.
+- Download whole groups, a random total, or X new songs independently per selected group.
+- Add searchable group selection, a stable song preview, individual exclusions, reshuffling, and an original-file size estimate.
+- Skip downloaded/queued files and deduplicate songs shared across groups.
+- Import and persist existing Plex track/album/artist mood and style tags; refresh music once after upgrading to populate these choices.
+- Preserve existing library data, queued ratings, login recovery, and Android Auto support.
+
 ## 0.5.0
 
 - Fix the repeated login flow after temporary DNS/network failures during Plex PIN polling or server discovery.

@@ -30,6 +30,7 @@ object LibraryJson {
         put("tracks", JSONArray(s.tracks.map { t -> JSONObject().apply {
             put("id", t.id); put("title", t.title); put("artist", t.artist); put("album", t.album)
             put("albumId", t.albumId); put("artistId", t.artistId); put("genres", JSONArray(t.genres))
+            put("moods", JSONArray(t.moods)); put("styles", JSONArray(t.styles))
             put("disc", t.disc); put("number", t.number); put("duration", t.duration)
             put("remoteKey", t.remoteKey); put("part", t.part); put("extension", t.extension)
             put("localUri", t.localUri); put("serverRating", t.serverRating); put("localRating", t.localRating)
@@ -52,7 +53,8 @@ object LibraryJson {
                 extension = t.optString("extension", "mp3"), localUri = t.optString("localUri"),
                 serverRating = t.optInt("serverRating"), localRating = t.optInt("localRating"),
                 pendingRating = if (t.isNull("pendingRating")) null else t.getInt("pendingRating"), bytes = t.optLong("bytes"),
-                exactPlexRating = if (t.isNull("exactPlexRating")) null else t.getDouble("exactPlexRating")
+                exactPlexRating = if (t.isNull("exactPlexRating")) null else t.getDouble("exactPlexRating"),
+                moods = t.optJSONArray("moods")?.strings().orEmpty(), styles = t.optJSONArray("styles")?.strings().orEmpty()
             ) }.orEmpty(),
             playlists = o.optJSONArray("playlists")?.objects()?.map { Playlist(it.getString("id"), it.getString("name"), it.getJSONArray("tracks").strings(), it.optBoolean("plex")) }.orEmpty(),
             downloads = o.optJSONArray("downloads")?.objects()?.map { DownloadJob(it.getString("id"), it.getString("state"), it.optString("error")) }.orEmpty(),

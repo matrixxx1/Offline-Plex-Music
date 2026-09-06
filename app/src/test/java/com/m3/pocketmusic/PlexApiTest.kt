@@ -25,8 +25,8 @@ class PlexApiTest {
                 path == "/" -> """{"MediaContainer":{"machineIdentifier":"test-server"}}"""
                 path == "/library/sections" -> """{"MediaContainer":{"Directory":[{"type":"artist","key":"1","title":"Music"},{"type":"movie","key":"2","title":"Movies"}]}}"""
                 path == "/library/sections/1/all" -> when {
-                    x.requestURI.query.contains("type=8") -> """{"MediaContainer":{"Metadata":[{"ratingKey":"artist","Genre":[{"tag":"Rock"}]}]}}"""
-                    x.requestURI.query.contains("type=9") -> """{"MediaContainer":{"Metadata":[{"ratingKey":"album","Genre":[{"tag":"Indie"}]}]}}"""
+                    x.requestURI.query.contains("type=8") -> """{"MediaContainer":{"Metadata":[{"ratingKey":"artist","Genre":[{"tag":"Rock"}],"Mood":[{"tag":"Energetic"}],"Style":[{"tag":"Alternative"}]}]}}"""
+                    x.requestURI.query.contains("type=9") -> """{"MediaContainer":{"Metadata":[{"ratingKey":"album","Genre":[{"tag":"Indie"}],"Mood":[{"tag":" happy "},{"tag":""}],"Style":[{"tag":"Indie Rock"}]}]}}"""
                     x.requestURI.query.contains("Container-Start=0") -> """{"MediaContainer":{"totalSize":2,"Metadata":[${track("1")}]}}"""
                     else -> """{"MediaContainer":{"totalSize":2,"Metadata":[${track("2")}]}}"""
                 }
@@ -41,7 +41,7 @@ class PlexApiTest {
         server.start()
         api = PlexApi(PlexConfig("http://127.0.0.1:${server.address.port}", "test-token", "test-server"))
     }
-    private fun track(id: String) = """{"type":"$trackType","ratingKey":"$id","title":"Song","grandparentTitle":"Artist","parentTitle":"Album","grandparentRatingKey":"artist","parentRatingKey":"album","userRating":$rating,"Media":[{"container":"flac","Part":[{"key":"/library/parts/$id/file.flac","size":100}]}]}"""
+    private fun track(id: String) = """{"type":"$trackType","ratingKey":"$id","title":"Song","grandparentTitle":"Artist","parentTitle":"Album","grandparentRatingKey":"artist","parentRatingKey":"album","userRating":$rating,"Mood":[{"tag":"Happy"},{"tag":"Playful"}],"Media":[{"container":"flac","Part":[{"key":"/library/parts/$id/file.flac","size":100}]}]}"""
     @After fun stop() { server.stop(0) }
     @Test fun paginatedMusicOnlyImportIncludesInheritedGenres() {
         val tracks = api.library { }
@@ -55,6 +55,16 @@ class PlexApiTest {
         assertEquals(2, rating)
         assertEquals("PUT", requests.first().first)
         assertTrue(requests.last().second.startsWith("/library/metadata/1"))
+    }
+    @Test fun importsTrackAlbumAndArtistTagsWithoutDroppingAudioOrWritingMetadata() {
+        val tracks = api.library { }
+        tracks.forEach { t ->
+            assertEquals(listOf("Happy", "Playful", "Energetic"), t.moods)
+            assertEquals(listOf("Indie Rock", "Alternative"), t.styles)
+            assertEquals("flac", t.extension); assertTrue(t.part.startsWith("/library/parts/"))
+        }
+        assertTrue(requests.all { it.first == "GET" })
+        assertTrue(requests.filter { it.second.startsWith("/library/sections/1/all") }.all { it.second.contains("includeOptionalElements=Genre,Mood,Style") })
     }
     @Test fun deletionRefusesNonMusicMetadata() {
         trackType = "movie"

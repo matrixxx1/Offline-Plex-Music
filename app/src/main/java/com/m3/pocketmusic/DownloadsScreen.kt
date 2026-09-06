@@ -17,7 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@Composable fun DownloadsScreen(state: LibraryState, busy: Boolean, vm: MusicViewModel, remove: (Set<String>) -> Unit) {
+@Composable fun DownloadsScreen(state: LibraryState, busy: Boolean, vm: MusicViewModel, smartDownload: () -> Unit, remove: (Set<String>) -> Unit) {
     var queueTab by rememberSaveable { mutableStateOf(false) }
     var filter by remember { mutableStateOf(DownloadFilter.ALL) }
     var key by remember { mutableStateOf<String?>(null) }
@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
     }
     val selection = selected.intersect(filtered.map { it.id }.toSet())
     Column(Modifier.fillMaxSize()) {
+        Button(onClick = smartDownload, modifier = Modifier.fillMaxWidth()) { Text("Smart download from Plex") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(!queueTab, { queueTab = false }, label = { Text("On device (${offline.size})") })
             FilterChip(queueTab, { queueTab = true }, label = { Text("Transfers (${state.downloads.size})") })
