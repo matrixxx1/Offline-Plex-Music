@@ -21,6 +21,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     val servers by vm.servers.collectAsStateWithLifecycle()
     val signingIn by vm.signingIn.collectAsStateWithLifecycle()
     val loginUrl by vm.loginUrl.collectAsStateWithLifecycle()
+    val login by vm.login.collectAsStateWithLifecycle()
     var advanced by remember { mutableStateOf(false) }
     var url by remember(connection.url) { mutableStateOf(connection.url) }
     var token by remember(connection.token) { mutableStateOf(connection.token) }
@@ -43,14 +44,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
                 OutlinedButton(onClick = openLibrary) { Text("Open library to play") }
             } }
         }
+        if (login.pending) {
+            Text(if (login.token.isNotBlank()) "Plex sign-in saved" else "Plex sign-in in progress", fontWeight = FontWeight.Bold)
+            Text(if (login.token.isNotBlank()) "You are authorized. Retry server discovery without signing in again."
+                else "If Plex says you have successfully signed in, return here and retry the connection. This continues the same sign-in.", fontSize = 13.sp)
+        }
         Button(onClick = { vm.signIn(::browser) }, enabled = !busy && !state.offline, modifier = Modifier.fillMaxWidth()) {
-            Text("Sign in with Plex")
+            Text(if (login.pending) "Retry connection" else "Sign in with Plex")
         }
-        Text("Plex opens in your browser. After authorizing, return to this app to select your server. Your Plex password stays with Plex.", fontSize = 12.sp)
-        if (signingIn) {
-            if (loginUrl.isNotBlank()) OutlinedButton(onClick = { runCatching { browser(loginUrl) }.onFailure { vm.message.value = "No browser is available. Install a browser or use Advanced connection." } }) { Text("Reopen Plex sign-in") }
-            TextButton(onClick = { vm.cancelSignIn() }) { Text("Cancel sign-in") }
-        }
+        if (!login.pending) Text("Plex opens in your browser. After authorizing, return to this app to select your server. Your Plex password stays with Plex.", fontSize = 12.sp)
+        if (loginUrl.isNotBlank()) OutlinedButton(onClick = { runCatching { browser(loginUrl) }.onFailure { vm.message.value = "No browser is available. Install a browser or use Advanced connection." } }, enabled = !state.offline) { Text("Reopen Plex sign-in") }
+        if (signingIn) TextButton(onClick = { vm.cancelSignIn() }) { Text("Pause connection") }
+        if (login.pending) TextButton(onClick = { vm.resetSignIn() }, enabled = !busy) { Text("Start a new sign-in / change account") }
         servers.forEach { server ->
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
                 Text(server.name, fontWeight = FontWeight.Bold)

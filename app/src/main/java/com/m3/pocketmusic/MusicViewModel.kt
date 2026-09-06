@@ -11,7 +11,6 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,7 +26,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val connection = MutableStateFlow(config)
     val servers = MutableStateFlow<List<PlexServer>>(emptyList())
     val signingIn = MutableStateFlow(false)
-    val loginUrl = MutableStateFlow("")
+    val login = MutableStateFlow(store.credentials.readLogin())
+    val loginUrl = MutableStateFlow(login.value.pin?.let { PlexAccountApi(store.credentials.clientId).authUrl(it) }.orEmpty())
     private var operation: Job? = null
     private fun task(block: suspend () -> String) {
         if (busy.value) return
@@ -44,24 +44,22 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         signingIn.value = true; servers.value = emptyList()
         try {
             val api = PlexAccountApi(store.credentials.clientId)
-            val pin = withContext(Dispatchers.IO) { api.createPin() }
-            loginUrl.value = api.authUrl(pin)
-            openBrowser(loginUrl.value)
-            progress.value = "Finish sign-in in your browser, then return here."
-            val deadline = android.os.SystemClock.elapsedRealtime() + pin.expiresIn * 1000L
-            var token: String? = null
-            while (token == null && android.os.SystemClock.elapsedRealtime() < deadline) {
-                delay(2000)
-                token = withContext(Dispatchers.IO) { api.checkPin(pin) }
-            }
-            check(token != null) { "Sign-in expired. Tap Sign in with Plex to try again." }
-            progress.value = "Finding your Plex servers"
-            servers.value = withContext(Dispatchers.IO) { api.servers(token) }
+            val flow = PlexLoginFlow(api, { login.value }, { saved ->
+                store.credentials.saveLogin(saved)
+                login.value = saved
+                loginUrl.value = saved.pin?.let { api.authUrl(it) }.orEmpty()
+            })
+            servers.value = flow.resume(openBrowser) { progress.value = it }
             if (servers.value.isEmpty()) "Signed in, but no accessible servers were found. Check that your server is claimed by this Plex account and online."
             else "Signed in. Choose your server below to connect and import music."
-        } finally { signingIn.value = false; loginUrl.value = "" }
+        } finally { signingIn.value = false }
     }
-    fun cancelSignIn() { if (signingIn.value) { operation?.cancel(); message.value = "Sign-in canceled." } }
+    fun cancelSignIn() { if (signingIn.value) { operation?.cancel(); message.value = "Connection paused. Your sign-in is saved; tap Retry connection to continue." } }
+    fun resetSignIn() {
+        if (busy.value) return
+        store.credentials.saveLogin(PlexLogin()); login.value = PlexLogin(); loginUrl.value = ""; servers.value = emptyList()
+        message.value = "Ready for a new Plex sign-in. Your saved server, music, and ratings are unchanged."
+    }
     fun connectServer(server: PlexServer) = task {
         check(!state.value.offline) { "Turn off Offline only before connecting." }
         val candidate = withContext(Dispatchers.IO) {

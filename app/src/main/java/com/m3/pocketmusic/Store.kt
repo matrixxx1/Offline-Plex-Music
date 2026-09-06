@@ -108,4 +108,17 @@ class Credentials(context: Context) {
             .putString("token", Base64.encodeToString(cipher.doFinal(config.token.toByteArray()), Base64.NO_WRAP))
             .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).commit())
     }
+    fun readLogin(): PlexLogin {
+        val encrypted = prefs.getString("login", "").orEmpty()
+        if (encrypted.isBlank()) return PlexLogin()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(prefs.getString("login_iv", ""), Base64.NO_WRAP)))
+        return PlexLogin.decode(String(cipher.doFinal(Base64.decode(encrypted, Base64.NO_WRAP)), Charsets.UTF_8))
+    }
+    fun saveLogin(login: PlexLogin) {
+        if (!login.pending) { check(prefs.edit().remove("login").remove("login_iv").commit()); return }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+        check(prefs.edit().putString("login", Base64.encodeToString(cipher.doFinal(login.encode().toByteArray(Charsets.UTF_8)), Base64.NO_WRAP))
+            .putString("login_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP)).commit())
+    }
 }

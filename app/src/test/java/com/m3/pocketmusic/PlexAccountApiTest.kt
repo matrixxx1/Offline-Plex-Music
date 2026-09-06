@@ -7,6 +7,24 @@ import org.junit.Test
 import java.net.InetSocketAddress
 
 class PlexAccountApiTest {
+    @Test fun dnsFailureUsesAlternateHostAndRetainsItForLaterRequests() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var failedHostCalls = 0
+        server.createContext("/") { x ->
+            val body = """{"authToken":"test-token"}""".toByteArray()
+            x.sendResponseHeaders(200, body.size.toLong()); x.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val fallback = "http://127.0.0.1:${server.address.port}"
+            val api = PlexAccountApi("client", "https://plex.tv", fallback) { address ->
+                if (address.startsWith("https://plex.tv/")) { failedHostCalls++; throw java.net.UnknownHostException("plex.tv") }
+                java.net.URL(address).openConnection() as java.net.HttpURLConnection
+            }
+            repeat(2) { assertEquals("test-token", api.checkPin(PlexPin(42, "code", 1800))) }
+            assertEquals(1, failedHostCalls)
+        } finally { server.stop(0) }
+    }
     @Test fun pinFlowUsesStrongPinConsistentClientAndHeaderToken() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val requests = mutableListOf<String>()

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Fix the repeated login flow after temporary DNS/network failures during Plex PIN polling or server discovery.
+- Encrypt and persist pending PINs before opening the browser and account tokens before discovering servers.
+- Add Retry connection, Reopen Plex sign-in, and Pause connection; retries continue the same login after app restarts.
+- Retry transient failures and fall back to Plex's alternate HTTPS API hostname for DNS/connection errors, retaining normal TLS verification.
+- Distinguish expired/revoked authorization from temporary connectivity problems and honor the PIN's full advertised lifetime.
+- Allow starting a new sign-in without clearing the saved server, music, downloads, or queued ratings.
+
 ## 0.4.0
 
 - Add Android Auto discovery with an exported MediaLibraryService and the platform media-browser bridge.

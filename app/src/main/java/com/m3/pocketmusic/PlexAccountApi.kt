@@ -6,15 +6,38 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
+import java.net.UnknownHostException
+import java.net.ConnectException
 
 const val APP_NAME = "Offline Plex music"
 data class PlexPin(val id: Long, val code: String, val expiresIn: Int)
 data class PlexServer(val name: String, val id: String, val token: String, val connections: List<String>)
+class PlexHttpException(val status: Int) : IllegalStateException("Plex returned HTTP $status.")
+interface PlexAccountClient {
+    fun createPin(): PlexPin
+    fun authUrl(pin: PlexPin): String
+    fun checkPin(pin: PlexPin): String?
+    fun servers(token: String): List<PlexServer>
+}
 
-/** Plex's browser PIN flow. Account tokens remain in memory; only a selected server token is saved. */
-class PlexAccountApi(private val clientId: String, private val baseUrl: String = "https://plex.tv") {
+/** Both hosts are Plex-owned HTTPS endpoints; redirects and certificate bypasses are disallowed. */
+class PlexAccountApi(private val clientId: String, private val baseUrl: String = "https://plex.tv",
+    private val fallbackBaseUrl: String? = if (baseUrl == "https://plex.tv") "https://clients.plex.tv" else null,
+    private val open: (String) -> HttpURLConnection = { URL(it).openConnection() as HttpURLConnection }
+) : PlexAccountClient {
+    private var preferredBaseUrl = baseUrl
     private fun request(path: String, method: String = "GET", token: String = ""): String {
-        val connection = URL(baseUrl + path).openConnection() as HttpURLConnection
+        val hosts = listOfNotNull(preferredBaseUrl, baseUrl, fallbackBaseUrl).distinct()
+        hosts.forEachIndexed { index, host ->
+            try { return requestAt(host, path, method, token).also { preferredBaseUrl = host } }
+            catch (e: Exception) {
+                if (index == hosts.lastIndex || (e !is UnknownHostException && e !is ConnectException)) throw e
+            }
+        }
+        error("No Plex API endpoint available")
+    }
+    private fun requestAt(host: String, path: String, method: String, token: String): String {
+        val connection = open(host + path)
         try {
             connection.requestMethod = method
             connection.connectTimeout = 15_000; connection.readTimeout = 20_000
@@ -29,18 +52,18 @@ class PlexAccountApi(private val clientId: String, private val baseUrl: String =
                 connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
                 connection.outputStream.use { it.write("strong=true".toByteArray()) }
             }
-            check(connection.responseCode in 200..299) { "Plex sign-in returned HTTP ${connection.responseCode}. Try signing in again." }
+            if (connection.responseCode !in 200..299) throw PlexHttpException(connection.responseCode)
             return connection.inputStream.bufferedReader().use { it.readText() }
         } finally { connection.disconnect() }
     }
-    fun createPin(): PlexPin = JSONObject(request("/api/v2/pins", "POST")).let {
-        PlexPin(it.getLong("id"), it.getString("code"), it.optInt("expiresIn", 300).coerceIn(1, 900))
+    override fun createPin(): PlexPin = JSONObject(request("/api/v2/pins", "POST")).let {
+        PlexPin(it.getLong("id"), it.getString("code"), it.optInt("expiresIn", 300).coerceIn(1, 3600))
     }
-    fun authUrl(pin: PlexPin): String = "https://app.plex.tv/auth#?clientID=${encode(clientId)}&code=${encode(pin.code)}&context%5Bdevice%5D%5Bproduct%5D=${encode(APP_NAME)}"
-    fun checkPin(pin: PlexPin): String? = JSONObject(request("/api/v2/pins/${pin.id}?code=${encode(pin.code)}")).let {
+    override fun authUrl(pin: PlexPin): String = "https://app.plex.tv/auth#?clientID=${encode(clientId)}&code=${encode(pin.code)}&context%5Bdevice%5D%5Bproduct%5D=${encode(APP_NAME)}"
+    override fun checkPin(pin: PlexPin): String? = JSONObject(request("/api/v2/pins/${pin.id}?code=${encode(pin.code)}")).let {
         if (it.isNull("authToken")) null else it.optString("authToken").takeIf(String::isNotBlank)
     }
-    fun servers(token: String): List<PlexServer> = parseServers(JSONArray(request("/api/v2/resources?includeHttps=1&includeRelay=1", token = token)))
+    override fun servers(token: String): List<PlexServer> = parseServers(JSONArray(request("/api/v2/resources?includeHttps=1&includeRelay=1", token = token)))
     companion object {
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
         internal fun parseServers(resources: JSONArray): List<PlexServer> = (0 until resources.length()).mapNotNull { index ->

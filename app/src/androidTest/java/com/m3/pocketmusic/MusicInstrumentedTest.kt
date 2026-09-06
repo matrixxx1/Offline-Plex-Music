@@ -25,6 +25,7 @@ class MusicInstrumentedTest {
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val store get() = context.musicStore
     @Before fun seed() {
+        store.credentials.saveLogin(PlexLogin())
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             android.os.ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("pm grant com.m3.pocketmusic android.permission.POST_NOTIFICATIONS")).use { it.readBytes() }
         }
@@ -196,6 +197,36 @@ class MusicInstrumentedTest {
             assertEquals(2, store.state.value.tracks.size)
             assertTrue(store.state.value.tracks.none { it.downloaded })
         } finally { socket.close(); thread.join(1000) }
+    }
+    @Test fun savedPlexLoginSurvivesRecreationEncryptedAndCanResetIndependently() {
+        val savedServer = PlexConfig("https://unit.invalid", "test-existing-server-token", "test-existing-server")
+        store.credentials.save(savedServer)
+        store.rate(setOf("remote:3"), 1)
+        val pinState = PlexLogin(PlexPin(42, "test-pending-pin", 1800), System.currentTimeMillis() + 1_800_000)
+        store.credentials.saveLogin(pinState)
+        assertEquals(pinState, Credentials(context).readLogin())
+        assertFalse(context.getSharedPreferences("connection", Context.MODE_PRIVATE).all.toString().contains("test-pending-pin"))
+        compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Plex", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Retry connection").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Reopen Plex sign-in").assertExists()
+        compose.onNodeWithText("Sign in with Plex").assertDoesNotExist()
+
+        val authorized = PlexLogin(token = "test-saved-account-token")
+        store.credentials.saveLogin(authorized)
+        compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Plex", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Plex sign-in saved").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Reopen Plex sign-in").assertDoesNotExist()
+        assertEquals(authorized, Credentials(context).readLogin())
+        assertFalse(context.getSharedPreferences("connection", Context.MODE_PRIVATE).all.toString().contains("test-saved-account-token"))
+        screenshot("plex-login-recovery")
+        compose.onNodeWithText("Start a new sign-in / change account").performScrollTo().performClick()
+        assertFalse(Credentials(context).readLogin().pending)
+        assertEquals(savedServer, Credentials(context).read())
+        assertEquals(1, store.state.value.tracks.first { it.id == "remote:3" }.pendingRating)
     }
     @Test fun emptyLibraryShowsPlexSetupAndCorrectAppName() {
         store.credentials.save(PlexConfig())

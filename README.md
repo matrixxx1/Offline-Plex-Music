@@ -1,6 +1,6 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.4.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.5.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -30,12 +30,20 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.4.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install `Offline-Plex-Music-0.5.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
 5. Select tracks or whole artists/albums/genres, then **Download**. Permit notifications to see background download status. Copy your own music into the chosen folder and tap **Scan folder** when downloads are finished or canceled.
 6. Tap **Online** at the top to switch to **Offline**. Downloads pause and playback uses only local files. To resume downloads, switch online and use **Downloads → Transfers → Resume / retry**.
+
+### Recover a Plex login after a network error
+
+If the browser says you successfully signed in but the app cannot resolve or reach Plex, return to the app and tap **Retry connection**. The pending PIN is saved before opening the browser. Once Plex returns an account token, it is saved before server discovery. Both are encrypted with Android Keystore and survive app restarts. Retrying continues that login without reopening the browser; **Reopen Plex sign-in** reuses the same pending PIN if authorization is unfinished.
+
+The app retries temporary network/server errors and can use Plex's alternate HTTPS API host when the primary host fails DNS resolution or connection. It never disables certificate verification or changes phone network settings. If access remains blocked, try Wi-Fi or check mobile-data/VPN access for this app, then retry. An expired PIN or revoked account token requires a new sign-in; ordinary connection failures do not. **Start a new sign-in / change account** clears saved sign-in recovery state while preserving your server configuration, library, downloads, and queued ratings.
+
+Version 0.4.0 and earlier did not save unfinished logins, so an already-lost login cannot be recovered after upgrading. Begin one new sign-in on 0.5.0; subsequent retries preserve it.
 
 ### Manage downloaded music
 
@@ -87,7 +95,7 @@ Tests cover group selection/order/two-track behavior, exact-star cleanup, rating
 ## Current limits
 
 - A real Plex server/account has not been configured or tested in this workspace. Live authentication, library-specific metadata, permissions, streaming formats, and server deletion still need checking against your server. No real Plex media has been changed or deleted.
-- Plex browser sign-in and server discovery are supported. Plex Home profile switching and combining multiple servers are not included. A library is bound to one server identity to avoid sending queued changes to another server. If Android closes the app during sign-in, start sign-in again. Only the selected server token is saved; the account token is used in memory for discovery.
+- Plex browser sign-in and server discovery are supported. Plex Home profile switching and combining multiple servers are not included. A library is bound to one server identity to avoid sending queued changes to another server. Pending sign-in details and the account token are encrypted on the device so discovery can resume after network failure or process death; the selected server token is saved separately.
 - Streams and downloads use the original audio file. There is no transcoding; connection URLs, including available relay URLs, come from Plex discovery. Codec support depends on Android/Media3. WMA and other unsupported codecs may be indexed but fail playback with an error.
 - Local playlists do not sync edits back to Plex. Refresh imports Plex playlists; local copies and order edits remain on this device. Ratings are not written into audio-file tags.
 - Android may pause long downloads under battery or background-job limits. Use Resume/retry to continue. Partial files restart rather than using HTTP range resume.
