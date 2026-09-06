@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Rename the launcher, app header, notifications, and Plex product name to Offline Plex music. Keep the same application ID and upgrade path.
+- Add a visible Plex tab and direct Library connection/import controls.
+- Sign in through Plex in your browser, discover accessible servers, and select a server to connect and import music in one step.
+- Keep manual URL/token setup under Advanced connection. Saved connections can import or refresh directly.
+- Explain streaming and offline downloads and provide a download-folder picker in the Plex screen.
+- Preserve queued ratings and downloaded files during import. Connecting and importing never sync ratings or delete music.
+
 ## 0.2.0
 
 - Download or remove one track directly from its library row.

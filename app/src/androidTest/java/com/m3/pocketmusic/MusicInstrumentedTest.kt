@@ -197,6 +197,68 @@ class MusicInstrumentedTest {
             assertTrue(store.state.value.tracks.none { it.downloaded })
         } finally { socket.close(); thread.join(1000) }
     }
+    @Test fun emptyLibraryShowsPlexSetupAndCorrectAppName() {
+        store.credentials.save(PlexConfig())
+        store.update { LibraryState() }
+        compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Offline Plex music").assertIsDisplayed()
+        assertEquals("Offline Plex music", context.applicationInfo.loadLabel(context.packageManager).toString())
+        screenshot("empty-library")
+        compose.onNodeWithText("Connect Plex").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Sign in with Plex").assertIsDisplayed()
+        screenshot("plex-connect")
+        compose.onNodeWithText("Advanced connection (server URL + token)").performScrollTo().performClick()
+        compose.onNodeWithText("Plex server URL").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("X-Plex-Token").assertExists()
+    }
+    @Test fun visiblePlexConnectionImportsAndStreamsWithoutSyncingRatings() {
+        val audio = File(context.filesDir, "test-audio.wav").readBytes()
+        val socket = ServerSocket(0)
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val thread = Thread {
+            while (!socket.isClosed) runCatching {
+                socket.accept().use { client ->
+                    val reader = client.getInputStream().bufferedReader()
+                    val first = reader.readLine().orEmpty(); requests += first
+                    var line = reader.readLine(); while (!line.isNullOrEmpty()) line = reader.readLine()
+                    val path = first.substringAfter(' ').substringBefore(' ')
+                    val json = when {
+                        path == "/" -> """{"MediaContainer":{"machineIdentifier":"test-server"}}"""
+                        path == "/library/sections" -> """{"MediaContainer":{"Directory":[{"type":"artist","key":"1","title":"Music"}]}}"""
+                        path.contains("type=10") -> """{"MediaContainer":{"Metadata":[{"type":"track","ratingKey":"1","title":"Imported song","grandparentTitle":"Plex artist","userRating":8,"Media":[{"container":"wav","Part":[{"key":"/audio/1.wav"}]}]}]}}"""
+                        else -> """{"MediaContainer":{"Metadata":[]}}"""
+                    }
+                    val body = if (path.startsWith("/audio/")) audio else json.toByteArray()
+                    val type = if (path.startsWith("/audio/")) "audio/wav" else "application/json"
+                    client.getOutputStream().use { out ->
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray()); out.write(body)
+                    }
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            store.credentials.save(PlexConfig())
+            store.update { LibraryState(tracks = listOf(Track("plex:test-server:1", "Old metadata", remoteKey = "1", pendingRating = 1))) }
+            compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithText("Connect Plex").performClick()
+            compose.onNodeWithText("Advanced connection (server URL + token)").performScrollTo().performClick()
+            compose.onNodeWithText("Plex server URL").performScrollTo().performTextInput("http://127.0.0.1:${socket.localPort}")
+            compose.onNodeWithText("X-Plex-Token").performScrollTo().performTextInput("test-token")
+            compose.onNodeWithText("Connect & import music").performScrollTo().performClick()
+            compose.waitUntil(15_000) { store.state.value.tracks.any { it.title == "Imported song" } }
+            assertEquals(1, store.state.value.tracks.single().pendingRating)
+            assertEquals("test-server", store.credentials.read().serverId)
+            compose.onNodeWithText("Open library to play").performScrollTo().performClick()
+            compose.onNodeWithText("Imported song", useUnmergedTree = true).performClick()
+            compose.waitUntil(15_000) { PlaybackService.status.value.playing }
+            assertTrue(requests.any { it.startsWith("GET /audio/1.wav") })
+            assertTrue(requests.all { it.startsWith("GET ") })
+            compose.onNodeWithContentDescription("Pause").performClick()
+            screenshot("plex-imported")
+        } finally { socket.close(); thread.join(1000) }
+    }
     private fun screenshot(name: String) {
         compose.waitForIdle()
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {

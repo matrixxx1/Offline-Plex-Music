@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
     val progress by vm.progress.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val playing by PlaybackService.status.collectAsStateWithLifecycle()
+    val connection by vm.connection.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf("Library") }
     var search by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("Tracks") }
@@ -123,13 +124,13 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("POCKET MUSIC", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
+                    Text(APP_NAME, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, letterSpacing = 0.5.sp, fontWeight = FontWeight.Bold)
                     Text(if (tab == "Library") playlist?.name ?: "Your listening room" else tab, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 AssistChip(onClick = { vm.settings(offline = !state.offline) }, label = { Text(if (state.offline) "Offline" else "Online") })
             }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Library", "Playlists", "Downloads", "Settings").forEach { name -> FilterChip(tab == name, { tab = name }, label = { Text(name) }) }
+                listOf("Library", "Plex", "Playlists", "Downloads", "Settings").forEach { name -> FilterChip(tab == name, { tab = name }, label = { Text(name) }) }
             }
             if (busy || state.downloads.any { it.state == "Downloading" }) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -143,7 +144,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
             when (tab) {
+                "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) })
                 "Library" -> {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { tab = "Plex" }) { Text(if (connection.serverId.isBlank()) "Connect Plex" else "Plex connection") }
+                        if (connection.serverId.isNotBlank()) TextButton(onClick = { vm.refresh() }, enabled = !busy && !state.offline) { Text("Import music") }
+                    }
                     if (playlist != null) TextButton(onClick = { playlistId = null; selected = emptySet() }) { Text("← All music") }
                     OutlinedTextField(search, { search = it; selected = emptySet() }, placeholder = { Text("Search tracks, artists, albums…") },
                         leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
@@ -176,7 +182,7 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { deleteIds = RatingRules.oneStar(visible).map { it.id }.toSet() }, enabled = RatingRules.oneStar(visible).isNotEmpty() && !busy) { Text("Clean 1★") }
                     }
                     if (state.tracks.isEmpty()) {
-                        EmptyCard("Your music, wherever you go", "Connect your Plex server in Settings, or choose a folder and scan your own music. Your library stays available without a connection.")
+                        EmptyCard("Your music, wherever you go", "Open the Plex tab to sign in and import your music for streaming. Choose a download folder there for offline listening.")
                     } else if (group != "Tracks" && groupValue == null) {
                         val groups = base.flatMap { t -> keys(t).map { it.trim().lowercase(java.util.Locale.ROOT) to t } }.groupBy({ it.first }, { it.second }).toSortedMap()
                         LazyColumn(Modifier.weight(1f)) { items(groups.keys.toList()) { key ->
@@ -303,19 +309,9 @@ class MainActivity : ComponentActivity() {
 private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_000, ms.coerceAtLeast(0) / 1000 % 60)
 
 @Composable private fun Settings(vm: MusicViewModel, state: LibraryState, busy: Boolean, folder: () -> Unit, discard: () -> Unit) {
-    val saved = remember { vm.config }
-    var url by remember { mutableStateOf(saved.url) }; var token by remember { mutableStateOf(saved.token) }
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Plex connection", fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-        Text("Enter your server address and an X-Plex-Token for your account. Use your server’s HTTPS address when available. HTTP is supported for trusted local networks.", fontSize = 13.sp)
-        OutlinedTextField(url, { url = it }, label = { Text("Plex server URL") }, placeholder = { Text("https://your-server:32400") }, singleLine = true, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-        OutlinedTextField(token, { token = it }, label = { Text("X-Plex-Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-        Row { Button(onClick = { vm.connect(url, token) }, enabled = !busy && token.isNotBlank() && url.isNotBlank()) { Text("Save & test") }
-            TextButton(onClick = { vm.refresh() }, enabled = !busy && !state.offline) { Text("Refresh Plex") } }
-        Text("Find your token in Plex Web: open a media item → Get Info → View XML, then find X-Plex-Token in the address. Keep it private.", fontSize = 12.sp)
-        HorizontalDivider()
         Text("Offline music folder", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-        Text("Choose a dedicated folder such as Music/PocketMusic. Plex downloads go here. You can copy your own music into the same folder, then tap Scan folder. Subfolders are included.", fontSize = 13.sp)
+        Text("Choose a dedicated folder such as Music/OfflinePlexMusic. Plex downloads go here. You can copy your own music into the same folder, then tap Scan folder. Subfolders are included.", fontSize = 13.sp)
         Text(if (state.folder.isBlank()) "No folder selected" else android.net.Uri.decode(state.folder.substringAfterLast('/')), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
         Row { Button(onClick = folder, enabled = !busy && state.downloads.isEmpty()) { Text("Choose folder") }; TextButton(onClick = { vm.scan() }, enabled = !busy && state.folder.isNotBlank()) { Text("Scan folder") } }
         HorizontalDivider()
@@ -323,7 +319,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("A dot beside a rating means it is waiting to sync. Sync is always manual. Select an artist, album, genre, playlist, or individual tracks to rate, download, or delete in bulk. Clean 1★ reviews one-star tracks in your current view, including queued ratings.", fontSize = 13.sp)
         Text("Plex deletion removes the server’s media file, and requires an account with deletion permission plus Allow media deletion in Plex settings. The review asks you to choose this device, Plex, or both.", fontSize = 13.sp)
         TextButton(onClick = discard, enabled = !busy && state.tracks.any { it.pendingRating != null }) { Text("Discard queued Plex ratings") }
-        Text("Pocket Music 0.2.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.3.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

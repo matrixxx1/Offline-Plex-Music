@@ -82,6 +82,9 @@ data class PlexConfig(val url: String = "", val token: String = "", val serverId
 /** Token is encrypted using a non-exportable Android Keystore key; backups are disabled. */
 class Credentials(context: Context) {
     private val prefs = context.getSharedPreferences("connection", Context.MODE_PRIVATE)
+    val clientId: String get() = prefs.getString("clientId", null) ?: java.util.UUID.randomUUID().toString().also {
+        check(prefs.edit().putString("clientId", it).commit())
+    }
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("plex-token", null) as? SecretKey)?.let { return it }

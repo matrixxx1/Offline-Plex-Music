@@ -20,7 +20,7 @@ class PlexApi(val config: PlexConfig) {
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
             setRequestProperty("X-Plex-Token", config.token)
-            setRequestProperty("X-Plex-Product", "Pocket Music")
+            setRequestProperty("X-Plex-Product", APP_NAME)
             setRequestProperty("X-Plex-Client-Identifier", "pocket-music-android")
         }
     }

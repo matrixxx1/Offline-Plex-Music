@@ -9,6 +9,9 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -21,19 +24,60 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val busy = MutableStateFlow(false)
     val progress = MutableStateFlow("")
     val config get() = store.credentials.read()
+    val connection = MutableStateFlow(config)
+    val servers = MutableStateFlow<List<PlexServer>>(emptyList())
+    val signingIn = MutableStateFlow(false)
+    val loginUrl = MutableStateFlow("")
+    private var operation: Job? = null
     private fun task(block: suspend () -> String) {
         if (busy.value) return
         busy.value = true; message.value = ""
-        viewModelScope.launch {
+        operation = viewModelScope.launch {
             try { message.value = block() }
+            catch (e: CancellationException) { throw e }
             catch (e: Exception) { message.value = e.message ?: "Operation failed. Your queued ratings are saved." }
             finally { busy.value = false; progress.value = "" }
         }
     }
-    fun connect(url: String, token: String) = task {
-        val result = withContext(Dispatchers.IO) {
+    fun signIn(openBrowser: (String) -> Unit) = task {
+        check(!state.value.offline) { "Turn off Offline only before signing in." }
+        signingIn.value = true; servers.value = emptyList()
+        try {
+            val api = PlexAccountApi(store.credentials.clientId)
+            val pin = withContext(Dispatchers.IO) { api.createPin() }
+            loginUrl.value = api.authUrl(pin)
+            openBrowser(loginUrl.value)
+            progress.value = "Finish sign-in in your browser, then return here."
+            val deadline = android.os.SystemClock.elapsedRealtime() + pin.expiresIn * 1000L
+            var token: String? = null
+            while (token == null && android.os.SystemClock.elapsedRealtime() < deadline) {
+                delay(2000)
+                token = withContext(Dispatchers.IO) { api.checkPin(pin) }
+            }
+            check(token != null) { "Sign-in expired. Tap Sign in with Plex to try again." }
+            progress.value = "Finding your Plex servers"
+            servers.value = withContext(Dispatchers.IO) { api.servers(token) }
+            if (servers.value.isEmpty()) "Signed in, but no accessible servers were found. Check that your server is claimed by this Plex account and online."
+            else "Signed in. Choose your server below to connect and import music."
+        } finally { signingIn.value = false; loginUrl.value = "" }
+    }
+    fun cancelSignIn() { if (signingIn.value) { operation?.cancel(); message.value = "Sign-in canceled." } }
+    fun connectServer(server: PlexServer) = task {
+        check(!state.value.offline) { "Turn off Offline only before connecting." }
+        val candidate = withContext(Dispatchers.IO) {
+            server.connections.firstOrNull { url ->
+                progress.value = "Checking ${server.name}: ${java.net.URI(url).host}"
+                runCatching { PlexApi(PlexConfig(url, server.token)).identity() == server.id }.getOrDefault(false)
+            }?.let { PlexConfig(it, server.token, server.id) }
+        }
+        check(candidate != null) { "Could not reach ${server.name}. Check your Wi-Fi or Plex Remote Access, or enter a server address under Advanced connection." }
+        connectAndImport(candidate)
+    }
+    fun connect(url: String, token: String) = task { connectAndImport(PlexConfig(url.trim().trimEnd('/'), token.trim())) }
+    private suspend fun connectAndImport(candidate: PlexConfig): String {
+        withContext(Dispatchers.IO) {
             check(!state.value.offline) { "Turn off Offline only before connecting." }
-            val candidate = PlexConfig(url.trim().trimEnd('/'), token.trim())
+            progress.value = "Connecting to Plex"
             val id = PlexApi(candidate).identity()
             val old = config
             check(old.serverId.isBlank() || old.serverId == id) { "This library belongs to another server. Use the original server to preserve queued ratings and downloads." }
@@ -41,13 +85,14 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                 "Sync or discard queued ratings before changing the Plex account token."
             }
             store.credentials.save(candidate.copy(serverId = id))
-            "Connected. Tap Refresh Plex to load your music."
+            connection.value = config
         }
         PlaybackService.instance?.reloadConnection()
-        result
+        servers.value = emptyList()
+        return loadLibrary()
     }
-    fun refresh() = task {
-        withContext(Dispatchers.IO) {
+    fun refresh() = task { loadLibrary() }
+    private suspend fun loadLibrary(): String = withContext(Dispatchers.IO) {
             check(!state.value.offline) { "Turn off Offline only to refresh Plex." }
             val api = PlexApi(config)
             val loaded = api.library { progress.value = it }
@@ -61,8 +106,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             progress.value = "Loading Plex playlists"
             val playlistResult = runCatching { api.playlists() }
             playlistResult.getOrNull()?.let { lists -> store.update { it.copy(playlists = it.playlists.filterNot { p -> p.plex } + lists) } }
-            "Loaded ${loaded.size} tracks." + if (playlistResult.isFailure) " Playlist import failed; existing playlists were kept." else " Plex playlists updated."
-        }
+            "Imported ${loaded.size} tracks. Open Library and tap a track to stream, or use its download button for offline listening." + if (playlistResult.isFailure) " Playlist import failed; existing playlists were kept." else " Plex playlists updated."
     }
     fun syncRatings() = task {
         withContext(Dispatchers.IO) {
@@ -89,7 +133,10 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     fun discardRatings() { store.update { it.copy(tracks = it.tracks.map { t -> t.copy(pendingRating = null) }) } }
     fun settings(offline: Boolean = state.value.offline, mode: PlayMode = state.value.mode, two: Boolean = state.value.twoTrack) {
         store.update { it.copy(offline = offline, mode = mode, twoTrack = two) }
-        if (offline) WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
+        if (offline) {
+            cancelSignIn()
+            WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
+        }
         PlaybackService.instance?.settingsChanged()
     }
     fun downloads(ids: Set<String>) {

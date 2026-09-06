@@ -81,7 +81,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("downloads", "Music downloads", NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(applicationContext, "downloads").setSmallIcon(R.drawable.ic_music)
-            .setContentTitle("Pocket Music downloads").setContentText(title).setOngoing(true)
+            .setContentTitle("Offline Plex music downloads").setContentText(title).setOngoing(true)
             .addAction(0, "Cancel", androidx.work.WorkManager.getInstance(applicationContext).createCancelPendingIntent(id)).build()
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(42, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else ForegroundInfo(42, notification)
     }
