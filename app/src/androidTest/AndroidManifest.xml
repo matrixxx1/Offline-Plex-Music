@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver android:name="com.m3.pocketmusic.TestFolderGrant" android:exported="true" />
+        <provider android:name="com.m3.pocketmusic.TestMusicDocuments" android:authorities="com.m3.pocketmusic.test.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+        </provider>
+    </application>
+</manifest>
