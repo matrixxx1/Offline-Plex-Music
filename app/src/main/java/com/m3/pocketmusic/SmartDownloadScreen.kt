@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable fun SmartDownloadScreen(state: LibraryState, busy: Boolean, connected: Boolean,
-    back: () -> Unit, refresh: () -> Unit, chooseFolder: () -> Unit, download: (Set<String>) -> Unit) {
+    back: () -> Unit, refresh: () -> Unit, chooseFolder: () -> Unit, wifiOnly: (Boolean) -> Unit, download: (Set<String>) -> Unit) {
     var category by rememberSaveable { mutableStateOf(DownloadCategory.ALL) }
     var amount by rememberSaveable { mutableStateOf(DownloadAmount.ALL) }
     var count by rememberSaveable { mutableStateOf("10") }
@@ -120,6 +120,8 @@ import androidx.compose.ui.unit.sp
                 }
             }
             if (state.folder.isBlank()) OutlinedButton(onClick = chooseFolder, enabled = !busy && state.downloads.isEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Choose download folder") }
+            DownloadWifiSetting(state.wifiOnlyDownloads, wifiOnly)
+            Text(if (state.wifiOnlyDownloads) "Adds to queue; waits for Wi-Fi." else "Adds to queue; mobile data may be used.", fontSize = 12.sp)
             if (state.offline) Text("Enable online access to start downloading.", fontSize = 12.sp)
             Button(onClick = { download(selected.map { it.id }.toSet()); preview = null; back() },
                 enabled = !busy && !state.offline && connected && state.folder.isNotBlank() && selected.isNotEmpty(),

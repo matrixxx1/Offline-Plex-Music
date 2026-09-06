@@ -1,6 +1,6 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.6.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.7.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -17,6 +17,7 @@ A native Kotlin/Compose music player for a Plex music library and a folder of lo
 - **Clean 1★** reviews exactly one-star tracks in the current view, including queued ratings. Device and Plex deletion are independently selectable. Plex deletion requires typing `DELETE` and server permission. Rating or syncing never deletes music. Existing Plex half-star ratings are displayed and excluded from one-star cleanup unless exactly one star.
 - Local playlists: create, add selected tracks, remove tracks, reorder tracks, delete a playlist without deleting its music. Existing Plex audio playlists are imported with your library and can be used as a playback, radio, rating, and download scope.
 - Download jobs persist across restarts; pause, resume/retry, and cancel queue. Completed downloads remain after canceling. Interrupted files restart from the beginning; byte count is checked before they become available offline.
+- **Only download on Wi-Fi** defaults to on, including after upgrading. Songs wait in the queue until an allowed connection is available; uncheck it to permit mobile data. Streaming is controlled separately.
 
 ## Random modes
 
@@ -31,7 +32,7 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.6.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install `Offline-Plex-Music-0.7.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
@@ -63,6 +64,9 @@ Smart download selection runs locally on imported metadata and can be previewed 
 
 ### Manage downloaded music
 
+- Set **Only download on Wi-Fi** in **Downloads → Transfers**, the smart-download preview, or **Settings**. This single saved preference applies to every download, including individual and bulk selections. It is enabled by default for new and existing installs. Adding downloads on mobile data still queues them; they start automatically when Wi-Fi is available. Uncheck it to allow mobile data.
+- Changing the preference updates pending transfers. If Wi-Fi is lost during a Wi-Fi-only download, that unfinished file remains queued and restarts when allowed; completed downloads remain intact. **Pause** stays paused across preference changes until **Resume / retry**. Android may delay background jobs; Android 8 uses guarded retry scheduling where newer versions can request Wi-Fi directly.
+- Wi-Fi-only checks the app's active network rather than merely assuming an unmetered connection is Wi-Fi. A VPN must expose a Wi-Fi route without a cellular route; otherwise downloads wait. The app does not bypass the VPN or change your phone's network settings. Wi-Fi marked metered is still Wi-Fi. This option does not restrict streaming or manual Plex imports/rating sync.
 - Tap the download icon on a track or group to save it; tap its trash icon to review removing its local files.
 - Open **Downloads → On device**, then choose **All downloads**, **Artist**, **Album**, **Genre**, or **Rating below**. Choose the artist/album/genre from the dropdown or adjust the rating slider. Search further narrows the list.
 - Rating cleanup is strictly below the selected threshold: below 3★ includes 1★, 2★, and 2.5★, but not 3★. It uses unsynced ratings too. Unrated music is excluded unless **Include unrated tracks** is checked.

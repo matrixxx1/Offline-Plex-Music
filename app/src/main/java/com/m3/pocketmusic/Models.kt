@@ -24,7 +24,8 @@ data class DownloadJob(val id: String, val state: String = "Queued", val error: 
 data class LibraryState(
     val tracks: List<Track> = emptyList(), val playlists: List<Playlist> = emptyList(),
     val downloads: List<DownloadJob> = emptyList(), val folder: String = "",
-    val offline: Boolean = false, val mode: PlayMode = PlayMode.RANDOM_TRACK, val twoTrack: Boolean = false
+    val offline: Boolean = false, val mode: PlayMode = PlayMode.RANDOM_TRACK, val twoTrack: Boolean = false,
+    val wifiOnlyDownloads: Boolean = true, val downloadsPaused: Boolean = false
 )
 enum class PlayMode(val label: String) {
     RANDOM_TRACK("Random Track"), RANDOM_ALBUM("Random Album"),

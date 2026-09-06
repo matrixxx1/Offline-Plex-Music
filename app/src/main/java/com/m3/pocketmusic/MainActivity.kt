@@ -220,7 +220,7 @@ class MainActivity : ComponentActivity() {
                     } }
                 }
                 "Downloads" -> if (smartDownload) SmartDownloadScreen(state, busy, connection.serverId.isNotBlank(),
-                    { smartDownload = false }, vm::refresh, { folderPicker.launch(null) }, ::download)
+                    { smartDownload = false }, vm::refresh, { folderPicker.launch(null) }, vm::setDownloadWifiOnly, ::download)
                 else DownloadsScreen(state, busy, vm, { smartDownload = true }) { removeDownloadIds = it }
                 "Settings" -> Settings(vm, state, busy, { folderPicker.launch(null) }, { showDiscard = true })
             }
@@ -318,6 +318,9 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text(if (state.folder.isBlank()) "No folder selected" else android.net.Uri.decode(state.folder.substringAfterLast('/')), fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
         Row { Button(onClick = folder, enabled = !busy && state.downloads.isEmpty()) { Text("Choose folder") }; TextButton(onClick = { vm.scan() }, enabled = !busy && state.folder.isNotBlank()) { Text("Scan folder") } }
         HorizontalDivider()
+        DownloadWifiSetting(state.wifiOnlyDownloads, vm::setDownloadWifiOnly)
+        Text("Downloads are queued and wait for an allowed connection. This setting applies only to downloads; streaming follows your online/offline mode.", fontSize = 13.sp)
+        HorizontalDivider()
         Text("Ratings & cleanup", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("A dot beside a rating means it is waiting to sync. Sync is always manual. Select an artist, album, genre, playlist, or individual tracks to rate, download, or delete in bulk. Clean 1★ reviews one-star tracks in your current view, including queued ratings.", fontSize = 13.sp)
         Text("Plex deletion removes the server’s media file, and requires an account with deletion permission plus Allow media deletion in Plex settings. The review asks you to choose this device, Plex, or both.", fontSize = 13.sp)
@@ -326,7 +329,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.6.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.7.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

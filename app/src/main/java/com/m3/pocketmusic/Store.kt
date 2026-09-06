@@ -41,6 +41,7 @@ object LibraryJson {
             .put("tracks", JSONArray(p.tracks)).put("plex", p.plex) }))
         put("downloads", JSONArray(s.downloads.map { j -> JSONObject().put("id", j.id).put("state", j.state).put("error", j.error) }))
         put("folder", s.folder); put("offline", s.offline); put("mode", s.mode.name); put("twoTrack", s.twoTrack)
+        put("wifiOnlyDownloads", s.wifiOnlyDownloads); put("downloadsPaused", s.downloadsPaused)
     }.toString()
     fun decode(json: String): LibraryState {
         val o = JSONObject(json)
@@ -59,7 +60,8 @@ object LibraryJson {
             playlists = o.optJSONArray("playlists")?.objects()?.map { Playlist(it.getString("id"), it.getString("name"), it.getJSONArray("tracks").strings(), it.optBoolean("plex")) }.orEmpty(),
             downloads = o.optJSONArray("downloads")?.objects()?.map { DownloadJob(it.getString("id"), it.getString("state"), it.optString("error")) }.orEmpty(),
             folder = o.optString("folder"), offline = o.optBoolean("offline"),
-            mode = runCatching { PlayMode.valueOf(o.optString("mode")) }.getOrDefault(PlayMode.RANDOM_TRACK), twoTrack = o.optBoolean("twoTrack")
+            mode = runCatching { PlayMode.valueOf(o.optString("mode")) }.getOrDefault(PlayMode.RANDOM_TRACK), twoTrack = o.optBoolean("twoTrack"),
+            wifiOnlyDownloads = o.optBoolean("wifiOnlyDownloads", true), downloadsPaused = o.optBoolean("downloadsPaused", false)
         )
     }
 }

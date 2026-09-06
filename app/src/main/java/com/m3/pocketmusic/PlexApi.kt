@@ -7,7 +7,8 @@ import java.net.URI
 import java.net.URLEncoder
 import kotlin.math.roundToInt
 
-class PlexApi(val config: PlexConfig) {
+class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+    private val readTimeoutMs: Int = 60_000) {
     init {
         val uri = URI(config.url)
         require(uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.rawQuery == null && uri.fragment == null) { "Enter a server URL such as https://your-server:32400" }
@@ -15,8 +16,8 @@ class PlexApi(val config: PlexConfig) {
     }
     private fun connection(path: String, method: String): HttpURLConnection {
         require(path.startsWith("/") && !path.startsWith("//")) { "Invalid Plex media path" }
-        return (URI(config.url.trimEnd('/') + path).toURL().openConnection() as HttpURLConnection).apply {
-            requestMethod = method; connectTimeout = 20_000; readTimeout = 60_000
+        return open(URI(config.url.trimEnd('/') + path).toURL()).apply {
+            requestMethod = method; connectTimeout = 20_000; readTimeout = readTimeoutMs
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
             setRequestProperty("X-Plex-Token", config.token)

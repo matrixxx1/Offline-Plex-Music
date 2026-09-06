@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable fun DownloadsScreen(state: LibraryState, busy: Boolean, vm: MusicViewModel, smartDownload: () -> Unit, remove: (Set<String>) -> Unit) {
-    var queueTab by rememberSaveable { mutableStateOf(false) }
+    var queueTab by rememberSaveable { mutableStateOf(state.downloads.isNotEmpty()) }
     var filter by remember { mutableStateOf(DownloadFilter.ALL) }
     var key by remember { mutableStateOf<String?>(null) }
     var below by rememberSaveable { mutableDoubleStateOf(3.0) }
@@ -40,6 +40,11 @@ import androidx.compose.ui.unit.sp
             FilterChip(queueTab, { queueTab = true }, label = { Text("Transfers (${state.downloads.size})") })
         }
         if (queueTab) {
+            DownloadWifiSetting(state.wifiOnlyDownloads, vm::setDownloadWifiOnly)
+            Text(if (state.downloadsPaused) "Queue paused. Tap Resume / retry to continue."
+                else if (state.offline) "Queue waits until Offline only is turned off and you resume."
+                else if (state.wifiOnlyDownloads) "Queued songs start when Wi-Fi is available."
+                else "Queued songs start when a network is available. Mobile data may be used.", fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TextButton(onClick = vm::retryDownloads, enabled = !busy && state.downloads.isNotEmpty()) { Text("Resume / retry") }
                 TextButton(onClick = vm::pauseDownloads, enabled = state.downloads.isNotEmpty()) { Text("Pause") }
@@ -112,6 +117,13 @@ import androidx.compose.ui.unit.sp
                 }
             } }
         }
+    }
+}
+
+@Composable fun DownloadWifiSetting(checked: Boolean, change: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked, change, modifier = Modifier.testTag("download-wifi-only"))
+        Text("Only download on Wi-Fi", modifier = Modifier.clickable { change(!checked) }, fontSize = 14.sp)
     }
 }
 

@@ -138,6 +138,9 @@ class MusicInstrumentedTest {
         val audio = File(context.filesDir, "test-audio.wav").readBytes()
         val socket = ServerSocket(0)
         val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val holdSecond = java.util.concurrent.atomic.AtomicBoolean(true)
+        val secondStarted = java.util.concurrent.CountDownLatch(1)
+        val releaseSecond = java.util.concurrent.CountDownLatch(1)
         val thread = Thread {
             while (!socket.isClosed) runCatching {
                 socket.accept().use { client ->
@@ -147,7 +150,12 @@ class MusicInstrumentedTest {
                     val body = if (first.contains("/audio/")) audio else """{"MediaContainer":{"machineIdentifier":"test-server"}}""".toByteArray()
                     val type = if (first.contains("/audio/")) "audio/wav" else "application/json"
                     client.getOutputStream().use { out ->
-                        out.write("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray()); out.write(body)
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                        if (first.startsWith("GET /audio/2.wav") && holdSecond.compareAndSet(true, false)) {
+                            out.write(body, 0, 512); out.flush(); secondStarted.countDown()
+                            releaseSecond.await(20, java.util.concurrent.TimeUnit.SECONDS)
+                            out.write(body, 512, body.size - 512)
+                        } else out.write(body)
                     }
                 }
             }
@@ -170,8 +178,20 @@ class MusicInstrumentedTest {
             assertTrue(requests.any { it.startsWith("GET /audio/1.wav") })
             compose.onNodeWithContentDescription("Pause").performClick()
             val vm = MusicViewModel(context.applicationContext as MusicApp)
+            // Turn Wi-Fi off on this dedicated emulator. The default policy must queue without HTTP.
+            val audioRequests = requests.count { it.startsWith("GET /audio/") }
+            shell("svc wifi disable")
+            compose.waitUntil(15_000) { !onWifi() }
             compose.onNodeWithTag("track-download-download:1").performClick()
-            compose.waitUntil(30_000) { store.state.value.tracks.first().downloaded || store.state.value.downloads.any { it.state == "Failed" } }
+            compose.waitUntil { store.state.value.downloads.any { it.id == "download:1" } }
+            Thread.sleep(1500)
+            assertFalse(store.state.value.tracks.first().downloaded)
+            assertEquals(audioRequests, requests.count { it.startsWith("GET /audio/") })
+            assertEquals(1, MusicStore(context).state.value.downloads.size)
+            shell("svc wifi enable")
+            compose.waitUntil(20_000) { onWifi() }
+            // No Resume action: WorkManager automatically starts the waiting queue.
+            compose.waitUntil(45_000) { store.state.value.tracks.first().downloaded || store.state.value.downloads.any { it.state == "Failed" } }
             assertTrue(store.state.value.downloads.toString(), store.state.value.tracks.first().downloaded)
             // Complete the second download through the reviewed per-artist smart picker.
             compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
@@ -183,7 +203,17 @@ class MusicInstrumentedTest {
             compose.onNodeWithTag("smart-track-download:1").assertDoesNotExist()
             compose.onNodeWithTag("smart-track-download:2").assertExists()
             compose.onNodeWithTag("smart-download-confirm").performClick()
-            compose.waitUntil(30_000) { store.state.value.tracks.all { it.downloaded } || store.state.value.downloads.any { it.state == "Failed" } }
+            compose.waitUntil(15_000) { secondStarted.count == 0L }
+            shell("svc wifi disable")
+            compose.waitUntil(15_000) { !onWifi() }
+            releaseSecond.countDown()
+            try { compose.waitUntil(15_000) { store.state.value.downloads.any { it.id == "download:2" && it.state == "Queued" } } }
+            catch (e: Exception) { throw AssertionError("Interrupted queue: ${store.state.value.downloads}; completed=${store.state.value.tracks.filter { it.downloaded }.map { it.id }}", e) }
+            assertFalse(store.state.value.tracks.last().downloaded)
+            assertTrue(store.state.value.tracks.first().downloaded)
+            shell("svc wifi enable")
+            compose.waitUntil(20_000) { onWifi() }
+            compose.waitUntil(45_000) { store.state.value.tracks.all { it.downloaded } || store.state.value.downloads.any { it.state == "Failed" } }
             assertEquals(store.state.value.downloads.toString(), 2, store.state.value.tracks.count { it.downloaded })
             assertEquals(2, folder.listFiles().size)
             store.state.value.tracks.forEach { t ->
@@ -207,7 +237,33 @@ class MusicInstrumentedTest {
             assertTrue(folder.listFiles().isEmpty())
             assertEquals(2, store.state.value.tracks.size)
             assertTrue(store.state.value.tracks.none { it.downloaded })
-        } finally { socket.close(); thread.join(1000) }
+        } finally { releaseSecond.countDown(); shell("svc wifi enable"); socket.close(); thread.join(1000) }
+    }
+    @Test fun wifiDownloadPreferencePersistsAndDoesNotResumePausedQueue() {
+        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Transfers (0)").performClick()
+        compose.onNodeWithTag("download-wifi-only").assertIsOn().performClick()
+        assertFalse(MusicStore(context).state.value.wifiOnlyDownloads)
+        store.update { it.copy(downloads = listOf(DownloadJob("remote:3")), downloadsPaused = true) }
+        compose.onNodeWithTag("download-wifi-only").performClick()
+        assertTrue(store.state.value.downloadsPaused)
+        assertEquals(1, store.state.value.downloads.size)
+        assertTrue(MusicStore(context).state.value.wifiOnlyDownloads)
+        screenshot("wifi-download-queue")
+        compose.runOnUiThread { compose.activity.viewModelStore.clear() }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Transfers (1)").performClick()
+        compose.onNodeWithTag("download-wifi-only").assertIsOn()
+        compose.onNodeWithText("Queue paused.", substring = true).assertExists()
+    }
+    private fun shell(command: String) {
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+    }
+    private fun onWifi(): Boolean {
+        val manager = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+        return caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true && !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
     }
     @Test fun smartDownloadReviewsGenreSamplesAndSelectsExistingMoodTags() {
         val tracks = (1..6).map { n -> Track("smart:$n", "Sample song $n", "Artist ${if (n <= 3) "A" else "B"}", "Sample Album",

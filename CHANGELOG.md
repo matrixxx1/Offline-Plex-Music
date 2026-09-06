@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Add Only download on Wi-Fi, enabled by default for new installs and upgrades, in the smart-download preview, Transfers, and Settings.
+- Persist download selections in the queue until an allowed network is available; automatically start waiting downloads when Wi-Fi returns.
+- Apply preference changes to pending work and interrupt transfers that lose their allowed connection. Unfinished files remain queued; completed files are kept.
+- Persist an explicit pause so changing the Wi-Fi setting does not resume a paused queue.
+- Leave streaming, ratings, and library refresh behavior unchanged.
+
 ## 0.6.0
 
 - Add Smart download from the Downloads and Plex screens, with genre, artist, album, mood, and style selection.

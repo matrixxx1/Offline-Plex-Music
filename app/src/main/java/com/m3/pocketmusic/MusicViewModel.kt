@@ -3,9 +3,8 @@ package com.m3.pocketmusic
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
+import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
@@ -142,26 +141,37 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         if (state.value.offline) { message.value = "Turn off Offline only to download."; return }
         if (state.value.folder.isBlank()) { message.value = "Choose your music folder in Settings first."; return }
         val tracks = state.value.tracks.filter { it.id in ids && !it.downloaded && it.part.isNotBlank() }
-        store.update { s -> s.copy(downloads = (s.downloads + tracks.map { DownloadJob(it.id) }).distinctBy { it.id }.map {
+        store.update { s -> s.copy(downloadsPaused = false, downloads = (s.downloads + tracks.map { DownloadJob(it.id) }).distinctBy { it.id }.map {
             if (it.id in ids && it.state == "Failed") it.copy(state = "Queued", error = "") else it
         }) }
         enqueueDownloads()
-        message.value = "${tracks.size} tracks queued for download."
+        message.value = "${tracks.size} tracks queued for download." + if (state.value.wifiOnlyDownloads) " Downloads start automatically on Wi-Fi." else " Wi-Fi or mobile data may be used."
     }
     fun retryDownloads() {
         if (busy.value) return
         if (state.value.offline) { message.value = "Turn off Offline only to resume downloads."; return }
-        store.update { s -> s.copy(downloads = s.downloads.map { it.copy(state = "Queued", error = "") }) }
+        store.update { s -> s.copy(downloadsPaused = false, downloads = s.downloads.map { it.copy(state = "Queued", error = "") }) }
         enqueueDownloads()
     }
-    fun pauseDownloads() { WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads"); message.value = "Downloads paused. Tap Resume to continue." }
+    fun pauseDownloads() {
+        store.update { it.copy(downloadsPaused = true) }
+        WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads"); message.value = "Downloads paused. Tap Resume to continue."
+    }
+    fun setDownloadWifiOnly(enabled: Boolean) {
+        if (enabled == state.value.wifiOnlyDownloads) return
+        store.update { it.copy(wifiOnlyDownloads = enabled) }
+        WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
+        if (!state.value.offline && !state.value.downloadsPaused && state.value.downloads.isNotEmpty()) enqueueDownloads()
+        message.value = if (enabled) "Downloads will wait for Wi-Fi." else "Downloads may use Wi-Fi or mobile data."
+    }
     fun cancelDownloads() {
         WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
-        store.update { it.copy(downloads = emptyList()) }
+        store.update { it.copy(downloads = emptyList(), downloadsPaused = false) }
         message.value = "Download queue canceled. Completed files are kept."
     }
     private fun enqueueDownloads() {
-        val work = OneTimeWorkRequestBuilder<DownloadWorker>().setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
+        val work = OneTimeWorkRequestBuilder<DownloadWorker>().setConstraints(DownloadPolicy.constraints(state.value.wifiOnlyDownloads))
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, java.util.concurrent.TimeUnit.SECONDS).build()
         WorkManager.getInstance(getApplication()).enqueueUniqueWork("music-downloads", ExistingWorkPolicy.APPEND_OR_REPLACE, work)
     }
     fun playlist(name: String, ids: List<String>, target: String? = null) {
