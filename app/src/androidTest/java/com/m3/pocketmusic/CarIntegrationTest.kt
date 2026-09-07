@@ -173,6 +173,25 @@ class CarIntegrationTest {
         main { controller.transportControls.stop() }
         assertEquals(1, store.state.value.tracks.size)
     }
+    @Test fun largePhonePlaylistFeedsBoundedQueueAndContinuesInOrder() {
+        lateinit var future: com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaController>
+        val tracks = (0..399).map { store.state.value.tracks.first().copy(id = "long:$it", title = "Song $it") }
+        store.update { it.copy(tracks = tracks) }
+        main { future = androidx.media3.session.MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync() }
+        val modern = future.get(15, TimeUnit.SECONDS)
+        try {
+            main { PlaybackService.instance!!.playTracks(tracks) }
+            until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "long:0" }
+            main { assertEquals(100, modern.mediaItemCount); modern.seekTo(98, 0) }
+            until { var ready = false; main { ready = modern.mediaItemCount == 200 }; ready }
+            main { modern.seekTo(198, 0) }
+            until { var ready = false; main { ready = modern.mediaItemCount == 152 && modern.currentMediaItem?.mediaId == "long:198" }; ready }
+            main { assertTrue(modern.mediaItemCount <= 200); modern.seekTo(modern.mediaItemCount - 2, 0) }
+            until { var ready = false; main { ready = modern.getMediaItemAt(modern.mediaItemCount - 1).mediaId == "long:399" }; ready }
+            main { modern.seekTo(modern.mediaItemCount - 1, 0) }
+            until { PlaybackService.status.value.trackId == "long:399" }
+        } finally { main { modern.stop(); modern.release() } }
+    }
     @Test fun media3BrowserSearchAndIdResolutionRejectForeignUris() {
         lateinit var future: com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaBrowser>
         main { future = androidx.media3.session.MediaBrowser.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync() }

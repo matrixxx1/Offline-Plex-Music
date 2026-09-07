@@ -43,11 +43,22 @@ class MusicInstrumentedTest {
             Track("local:2", "Golden Hour", "North Coast", "Daylight", number = 2, genres = listOf("Indie"), localUri = wav.toURI().toString(), duration = 6000),
             Track("remote:3", "Night Drive", "Afterglow", "City Lights", remoteKey = "3", part = "/test.wav", genres = listOf("Electronic"))
         )) }
-        compose.waitForIdle()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
+    }
+    @Test fun equivalentLibrarySnapshotDoesNotLeaveLoadingScreenStuck() {
+        store.update { it.copy(tracks = it.tracks.map { t -> t.copy() }, wifiOnlyDownloads = !it.wifiOnlyDownloads) }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Artists", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("North Coast", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("North Coast", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(3, store.state.value.tracks.size)
     }
     @Test fun bulkArtistRatingStaysQueuedAndPersists() {
         compose.onNodeWithText("Artists", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Afterglow", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Afterglow", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Night Drive").fetchSemanticsNodes().isNotEmpty() }
         // Select all in the current artist view.
         compose.onNodeWithTag("select-all").performClick()
         compose.onNodeWithText("Rate", useUnmergedTree = true).performClick()
@@ -185,6 +196,7 @@ class MusicInstrumentedTest {
             compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
             compose.onNodeWithText("Download Plex playlists").performClick()
             compose.onNodeWithTag("download-playlist-plex:first").performClick()
+            compose.onNodeWithTag("playlist-download-options").performClick()
             compose.onNodeWithTag("playlist-download-confirm").performClick()
             compose.waitUntil { store.state.value.downloads.any { it.id == "download:1" } }
             Thread.sleep(1500)
@@ -201,6 +213,10 @@ class MusicInstrumentedTest {
             // The overlapping playlist skips the file already downloaded.
             compose.onNodeWithText("Download Plex playlists").performClick()
             compose.onNodeWithTag("download-playlist-plex:both").performClick()
+            compose.onNodeWithTag("playlist-download-options").performClick()
+            compose.onNodeWithTag("download-limited").performScrollTo().performClick()
+            compose.onNodeWithTag("download-max-mb").performScrollTo().performTextReplacement("1")
+            compose.onNodeWithTag("download-max-mb").performImeAction()
             compose.onNodeWithText("Queue 1 songs").assertExists()
             compose.onNodeWithTag("playlist-download-confirm").performClick()
             compose.waitUntil(15_000) { secondStarted.count == 0L }
@@ -277,6 +293,7 @@ class MusicInstrumentedTest {
         compose.onNodeWithTag("download-playlist-local").assertDoesNotExist()
         compose.onNodeWithTag("download-playlist-plex:a").performClick()
         compose.onNodeWithTag("download-playlist-plex:b").performClick()
+        compose.onNodeWithTag("playlist-download-options").performClick()
         compose.onNodeWithText("Queue 2 songs").assertExists()
         compose.onNodeWithTag("playlist-download-confirm").assertIsNotEnabled()
         screenshot("playlist-downloads")
@@ -287,8 +304,45 @@ class MusicInstrumentedTest {
         compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Download Plex playlists").performClick()
         compose.onNodeWithText("No Plex playlists found.", substring = true).assertExists()
-        compose.onNodeWithTag("playlist-download-confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("playlist-download-options").assertIsNotEnabled()
         assertTrue(store.state.value.downloads.isEmpty())
+    }
+    @Test fun largePlaylistOpensAndLoadsNumericDownloadOptionsWithoutFreezing() {
+        val tracks = (1..31_382).map { Track("large:$it", "Large song $it", "Artist ${it % 25}", "Album", artistId = "${it % 25}",
+            remoteKey = "$it", part = "/audio/$it", bytes = 4_000_000, pendingRating = if (it == 1) 1 else null) }
+        store.update { LibraryState(tracks = tracks, playlists = listOf(Playlist("plex:large", "Big playlist", tracks.map { it.id }, true))) }
+        compose.onNodeWithText("Playlists", useUnmergedTree = true).performClick()
+        val start = android.os.SystemClock.elapsedRealtime()
+        compose.onNodeWithTag("open-playlist-plex:large").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Large song 1").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue("Large playlist exceeded ANR-sized opening time", android.os.SystemClock.elapsedRealtime() - start < 5000)
+        compose.onNodeWithText("31382 tracks").assertExists()
+        compose.onNodeWithTag("open-playlist-download").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Queue 31382 songs").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("download-limited").performScrollTo().performClick()
+        compose.onNodeWithTag("download-max-mb").performScrollTo().performTextReplacement("20")
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Queue 5 songs").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("download-per-artist").performScrollTo().performClick()
+        compose.onNodeWithTag("download-artist-count").performScrollTo().performTextReplacement("1")
+        compose.onNodeWithTag("download-max-mb").performScrollTo().performTextReplacement("1000")
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Queue 25 songs").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("download-artist-count").performScrollTo().performTextReplacement("2")
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Queue 50 songs").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("download-max-mb").performScrollTo().performTextReplacement("0")
+        compose.onNodeWithTag("playlist-download-confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("download-max-mb").performTextReplacement("200")
+        compose.onNodeWithTag("download-max-mb").performImeAction()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Queue 50 songs").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5000) {
+            var keyboardVisible = true
+            compose.runOnIdle { keyboardVisible = androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true }
+            !keyboardVisible
+        }
+        // Insets change before the keyboard slide-out animation finishes.
+        Thread.sleep(500)
+        screenshot("playlist-size-options")
+        assertTrue(store.state.value.downloads.isEmpty())
+        assertEquals(1, store.state.value.tracks.first().pendingRating)
     }
     @Test fun savedPlexLoginSurvivesRecreationEncryptedAndCanResetIndependently() {
         val savedServer = PlexConfig("https://unit.invalid", "test-existing-server-token", "test-existing-server")

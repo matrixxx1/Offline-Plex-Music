@@ -11,6 +11,7 @@ data class CarQueue(val tracks: List<Track>, val start: Int = 0, val mode: PlayM
 /** A cached, network-free car library. Explicit range folders work with hosts without pagination. */
 class CarCatalog(private val state: LibraryState) {
     val tracks = state.tracks.filter { (!state.offline || it.downloaded) && (it.downloaded || it.part.isNotBlank()) }
+    private val byId = tracks.associateBy { it.id }
     private val ordered = tracks.sortedWith(compareBy<Track> { it.artist.lowercase(Locale.ROOT) }.thenBy { it.albumGroup }.thenBy { it.disc }.thenBy { it.number }.thenBy { it.title })
     fun children(parent: String): List<CarEntry> {
         val range = parent.split('|')
@@ -51,7 +52,7 @@ class CarCatalog(private val state: LibraryState) {
             "artist" -> ordered.filter { it.artistGroup == key }
             "album" -> ordered.filter { it.albumGroup == key }
             "genre" -> ordered.filter { t -> t.genres.ifEmpty { listOf("Unspecified") }.any { it.lowercase(Locale.ROOT) == key } }
-            "playlist" -> state.playlists.find { it.id == key }?.tracks?.mapNotNull { id -> tracks.find { it.id == id } }.orEmpty()
+            "playlist" -> state.playlists.find { it.id == key }?.tracks?.mapNotNull { id -> byId[id] }.orEmpty()
             "search" -> search(key)
             else -> emptyList()
         }

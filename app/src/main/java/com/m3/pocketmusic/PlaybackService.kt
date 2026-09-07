@@ -43,6 +43,8 @@ class PlaybackService : MediaLibraryService() {
     private val subscriptions = mutableMapOf<MediaSession.ControllerInfo, MutableSet<String>>()
     private val planner = RadioBuffer()
     private var appending = false
+    private var sequence: List<Track> = emptyList()
+    private var sequencePosition = 0
     private var radio = false
     private var removingIds: Set<String> = emptySet()
     private var scopeIds: Set<String>? = null
@@ -71,7 +73,9 @@ class PlaybackService : MediaLibraryService() {
                 status.value = status.value.copy(trackId = player.currentMediaItem?.mediaId, playing = player.isPlaying, radio = radio)
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                if (radio && mediaItem != null && player.currentMediaItemIndex >= player.mediaItemCount - 2) appendTask()
+                if (mediaItem != null && player.currentMediaItemIndex >= player.mediaItemCount - 2) {
+                    if (radio) appendTask() else appendSequential()
+                }
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED && radio) {
@@ -134,20 +138,44 @@ class PlaybackService : MediaLibraryService() {
         return super.onStartCommand(intent, flags, startId)
     }
     fun startRadio(ids: Set<String>? = null) {
-        radio = false; scopeIds = ids; planner.reset()
+        radio = false; sequence = emptyList(); scopeIds = ids; planner.reset()
         player.stop(); player.clearMediaItems()
         radio = true; appendTask(); appendTask()
         status.value = status.value.copy(error = "")
         if (player.mediaItemCount > 0) { player.prepare(); player.play() } else stopPlayback()
     }
     fun playTracks(tracks: List<Track>, start: Int = 0) {
-        radio = false; scopeIds = null
-        val playable = tracks.mapNotNull { media(it) }
-        if (playable.isEmpty()) return
-        val selectedId = tracks.getOrNull(start)?.id
-        player.setMediaItems(playable, playable.indexOfFirst { it.mediaId == selectedId }.coerceAtLeast(0), 0)
+        radio = false; scopeIds = null; sequence = tracks
+        val chosen = start.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
+        sequencePosition = (chosen - 50).coerceAtLeast(0)
+        val chunkStart = sequencePosition
+        val playable = nextSequentialChunk()
+        if (playable.isEmpty()) { stopPlayback(); return }
+        val selectedId = tracks.getOrNull(chosen)?.id
+        val occurrence = tracks.subList(chunkStart, chosen).count { it.id == selectedId }
+        val selectedIndex = playable.withIndex().filter { it.value.mediaId == selectedId }.getOrNull(occurrence)?.index ?: 0
+        appending = true
+        try { player.setMediaItems(playable, selectedIndex, 0) }
+        finally { appending = false }
         status.value = status.value.copy(error = "")
         player.prepare(); player.play()
+    }
+    private fun nextSequentialChunk(): List<MediaItem> {
+        val current = musicStore.state.value.tracks.associateBy { it.id }
+        val chunk = mutableListOf<MediaItem>()
+        while (sequencePosition < sequence.size && chunk.size < 100) {
+            val id = sequence[sequencePosition++].id
+            if (id !in removingIds) current[id]?.let { media(it) }?.let { chunk.add(it) }
+        }
+        return chunk
+    }
+    private fun appendSequential() {
+        if (radio || appending || sequencePosition >= sequence.size) return
+        appending = true
+        try {
+            player.addMediaItems(nextSequentialChunk())
+            if (player.currentMediaItemIndex > 100) player.removeMediaItems(0, player.currentMediaItemIndex - 50)
+        } finally { appending = false }
     }
     fun settingsChanged() {
         if (radio) {
@@ -187,6 +215,7 @@ class PlaybackService : MediaLibraryService() {
             .setMediaType(if (entry.playable) MediaMetadata.MEDIA_TYPE_MUSIC else MediaMetadata.MEDIA_TYPE_FOLDER_MIXED).build()
     ).build()
     private fun resolveCarRequest(items: List<MediaItem>, startIndex: Int, position: Long): MediaSession.MediaItemsWithStartPosition {
+        sequence = emptyList()
         val catalog = CarCatalog(musicStore.state.value.let { it.copy(tracks = it.tracks.filterNot { t -> t.id in removingIds }) })
         val requested = items.getOrNull(startIndex.coerceAtLeast(0)) ?: items.firstOrNull()
         val query = requested?.requestMetadata?.searchQuery
@@ -274,16 +303,17 @@ class PlaybackService : MediaLibraryService() {
     fun removeTracks(ids: Set<String>) {
         removingIds = removingIds + ids
         val wasRadio = radio
-        radio = false
+        val wasAppending = appending
+        radio = false; appending = true
         try { for (i in player.mediaItemCount - 1 downTo 0) if (player.getMediaItemAt(i).mediaId in ids) player.removeMediaItem(i) }
-        finally { radio = wasRadio }
+        finally { radio = wasRadio; appending = wasAppending }
     }
     fun finishRemoval(ids: Set<String>) {
         removingIds = removingIds - ids
-        if (radio && player.mediaItemCount - player.currentMediaItemIndex <= 2) appendTask()
+        if (player.mediaItemCount - player.currentMediaItemIndex <= 2) { if (radio) appendTask() else appendSequential() }
     }
     fun stopPlayback() {
-        radio = false; planner.reset(); scopeIds = null
+        radio = false; planner.reset(); scopeIds = null; sequence = emptyList()
         player.pause(); player.stop(); player.clearMediaItems()
         status.value = Playing()
         stopForeground(STOP_FOREGROUND_REMOVE)

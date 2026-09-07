@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+- Fix quadratic playlist resolution on phone and Android Auto. Cache track lookups, move library filtering and download planning off the UI thread, and preserve repeated playlist entries with unique row keys.
+- Open a playlist to browse songs and download it directly. Choose all missing songs, or a numeric MB budget with completely random songs or up to a numeric number per artist. Preview and reshuffle before queuing; exclude unknown sizes from capped selections.
+- Build/save large download queues on the IO dispatcher. Wi-Fi-only remains default-on; existing download/queue deduplication, queued ratings, and independent local/Plex deletion are retained.
+- Feed long phone playback lists into the media session in 100-song chunks, preserving order and nearby previous-track history instead of publishing tens of thousands of queue items at once.
+- Add regression coverage for a 31,382-track playlist, exact size limits, artist limits, invalid inputs, random selection, and sequential queue continuation.
+
+
 ## 0.8.0
 
 - Replace the smart download picker and track/group download buttons with Plex playlist selection. Refresh playlist membership and new tracks without a full library scan; queue missing songs once, retaining Wi-Fi-only by default.

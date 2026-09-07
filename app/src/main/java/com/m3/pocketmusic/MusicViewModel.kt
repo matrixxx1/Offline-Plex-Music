@@ -150,16 +150,18 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
         PlaybackService.instance?.settingsChanged()
     }
-    fun downloads(ids: Set<String>) {
-        if (busy.value) return
-        if (state.value.offline) { message.value = "Turn off Offline only to download."; return }
-        if (state.value.folder.isBlank()) { message.value = "Choose your music folder in Settings first."; return }
-        val tracks = state.value.tracks.filter { it.id in ids && !it.downloaded && it.part.isNotBlank() }
-        store.update { s -> s.copy(downloadsPaused = false, downloads = (s.downloads + tracks.map { DownloadJob(it.id) }).distinctBy { it.id }.map {
-            if (it.id in ids && it.state == "Failed") it.copy(state = "Queued", error = "") else it
-        }) }
-        enqueueDownloads()
-        message.value = "${tracks.size} tracks queued for download." + if (state.value.wifiOnlyDownloads) " Downloads start automatically on Wi-Fi." else " Wi-Fi or mobile data may be used."
+    fun downloads(ids: Set<String>) = task {
+        withContext(Dispatchers.IO) {
+            check(!state.value.offline) { "Turn off Offline only to download." }
+            check(state.value.folder.isNotBlank()) { "Choose your music folder in Settings first." }
+            progress.value = "Saving download queue"
+            val tracks = state.value.tracks.filter { it.id in ids && !it.downloaded && it.part.isNotBlank() }
+            store.update { s -> s.copy(downloadsPaused = false, downloads = (s.downloads + tracks.map { DownloadJob(it.id) }).distinctBy { it.id }.map {
+                if (it.id in ids && it.state == "Failed") it.copy(state = "Queued", error = "") else it
+            }) }
+            enqueueDownloads()
+            "${tracks.size} tracks queued for download." + if (state.value.wifiOnlyDownloads) " Downloads start automatically on Wi-Fi." else " Wi-Fi or mobile data may be used."
+        }
     }
     fun retryDownloads() {
         if (busy.value) return

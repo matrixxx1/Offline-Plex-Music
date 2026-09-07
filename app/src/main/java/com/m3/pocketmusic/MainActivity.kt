@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -69,6 +72,7 @@ class MainActivity : ComponentActivity() {
     val connection by vm.connection.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf("Library") }
     var playlistDownload by remember { mutableStateOf(false) }
+    var downloadPlaylistId by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("Tracks") }
     var groupValue by remember { mutableStateOf<String?>(null) }
@@ -110,14 +114,23 @@ class MainActivity : ComponentActivity() {
             }.onFailure { vm.message.value = "Folder access failed: ${it.message}" }
         }
     }
-    val playlist = state.playlists.find { it.id == playlistId }
-    val source = if (playlist == null) state.tracks else playlist.tracks.mapNotNull { id -> state.tracks.find { it.id == id } }
-    val base = source.filter { (!state.offline || it.downloaded) && (search.isBlank() || "${it.title} ${it.artist} ${it.album} ${it.genres.joinToString()}".contains(search, true)) }
-    fun keys(t: Track): List<String> = when (group) { "Artists" -> listOf(t.artist); "Albums" -> listOf("${t.artist} • ${t.album}"); "Genres" -> t.genres.ifEmpty { listOf("Unspecified") }; else -> emptyList() }
-    val visible = base.filter { groupValue == null || keys(it).any { key -> key.equals(groupValue, ignoreCase = true) } }
-    val activeSelection = selected.intersect(state.tracks.map { it.id }.toSet())
-    val queued = state.tracks.filter { it.pendingRating != null }
-    val now = state.tracks.find { it.id == playing.trackId }
+    val playlist = remember(state.playlists, playlistId) { state.playlists.find { it.id == playlistId } }
+    val loadedIndex by produceState<LibraryIndex?>(null, state.tracks) {
+        value = withContext(Dispatchers.Default) { LibraryIndex(state.tracks) }
+    }
+    val index = loadedIndex?.takeIf { it.tracks == state.tracks }
+    val request = remember(index, playlist, state.offline, search, group, groupValue) {
+        LibraryRequest(index, playlist, state.offline, search, group, groupValue)
+    }
+    val loadedView by produceState<Pair<LibraryRequest, LibraryView>?>(null, request) {
+        value = withContext(Dispatchers.Default) { request to request.load() }
+    }
+    val view = loadedView?.takeIf { it.first === request }?.second
+    val visible = view?.visible.orEmpty()
+    fun keys(t: Track) = groupKeys(t, group)
+    val activeSelection = remember(selected, index) { selected.intersect(index?.byId?.keys.orEmpty()) }
+    val queued = remember(state.tracks) { state.tracks.filter { it.pendingRating != null } }
+    val now = index?.byId?.get(playing.trackId)
 
     Scaffold(bottomBar = {
         if (now != null) NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true })
@@ -152,7 +165,11 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { tab = "Plex" }) { Text(if (connection.serverId.isBlank()) "Connect Plex" else "Plex connection") }
                         if (connection.serverId.isNotBlank()) TextButton(onClick = { vm.refresh() }, enabled = !busy && !state.offline) { Text("Import music") }
                     }
-                    if (playlist != null) TextButton(onClick = { playlistId = null; selected = emptySet() }) { Text("← All music") }
+                    if (playlist != null) Row {
+                        TextButton(onClick = { playlistId = null; selected = emptySet() }) { Text("← All music") }
+                        if (playlist.plex) TextButton(onClick = { downloadPlaylistId = playlist.id; tab = "Downloads"; playlistDownload = true }, modifier = Modifier.testTag("open-playlist-download")) { Text("Download playlist") }
+                    }
+                    if (index == null || view == null) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Loading playlist / library…", fontSize = 12.sp) }
                     OutlinedTextField(search, { search = it; selected = emptySet() }, placeholder = { Text("Search tracks, artists, albums…") },
                         leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -181,12 +198,12 @@ class MainActivity : ComponentActivity() {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(visible.isNotEmpty() && visible.all { it.id in activeSelection }, { checked -> selected = if (checked) visible.map { it.id }.toSet() else emptySet() }, modifier = Modifier.testTag("select-all"))
                         Text("${visible.size} tracks", fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { deleteIds = RatingRules.oneStar(visible).map { it.id }.toSet() }, enabled = RatingRules.oneStar(visible).isNotEmpty() && !busy) { Text("Clean 1★") }
+                        TextButton(onClick = { deleteIds = view?.oneStar.orEmpty().map { it.id }.toSet() }, enabled = view?.oneStar.orEmpty().isNotEmpty() && !busy) { Text("Clean 1★") }
                     }
                     if (state.tracks.isEmpty()) {
                         EmptyCard("Your music, wherever you go", "Open the Plex tab to sign in and import your music for streaming. Choose a download folder there for offline listening.")
                     } else if (group != "Tracks" && groupValue == null) {
-                        val groups = base.flatMap { t -> keys(t).map { it.trim().lowercase(java.util.Locale.ROOT) to t } }.groupBy({ it.first }, { it.second }).toSortedMap()
+                        val groups = view?.groups.orEmpty()
                         LazyColumn(Modifier.weight(1f)) { items(groups.keys.toList()) { key ->
                             val tracks = groups.getValue(key)
                             val label = keys(tracks.first()).firstOrNull { it.trim().equals(key, ignoreCase = true) } ?: key
@@ -197,9 +214,9 @@ class MainActivity : ComponentActivity() {
                             }
                         } }
                     } else {
-                        LazyColumn(Modifier.weight(1f)) { items(visible, key = { it.id }) { track ->
+                        LazyColumn(Modifier.weight(1f)) { itemsIndexed(visible, key = { i, t -> "$i:${t.id}" }) { trackIndex, track ->
                             TrackRow(track, track.id in activeSelection, track.id == now?.id, { checked -> selected = if (checked) selected + track.id else selected - track.id },
-                                { play { PlaybackService.instance?.playTracks(visible, visible.indexOf(track)) } }, { ratingIds = setOf(track.id) },
+                                { play { PlaybackService.instance?.playTracks(visible, trackIndex) } }, { ratingIds = setOf(track.id) },
                                 { removeDownloadIds = setOf(track.id) },
                                 !busy && track.downloaded)
                             if (playlist != null && !playlist.plex && track.id in activeSelection) Row {
@@ -216,14 +233,14 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { playlistIds = emptyList() }) { Text("New playlist") }
                     }
                     LazyColumn { items(state.playlists, key = { it.id }) { p ->
-                        Row(Modifier.fillMaxWidth().clickable { playlistId = p.id; tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().testTag("open-playlist-${p.id}").clickable { playlistId = p.id; tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) { Text(p.name, fontSize = 18.sp); Text("${p.tracks.size} tracks • ${if (p.plex) "Plex" else "On this device"}", fontSize = 12.sp) }
                             if (!p.plex) IconButton(onClick = { vm.deletePlaylist(p.id) }) { Icon(Icons.Default.Delete, "Delete playlist only") }
                         }
                     } }
                 }
                 "Downloads" -> if (playlistDownload) PlaylistDownloadScreen(state, busy, connection.serverId.isNotBlank(),
-                    { playlistDownload = false }, vm::refreshPlaylists, { folderPicker.launch(null) }, vm::setDownloadWifiOnly, ::download)
+                    { playlistDownload = false; downloadPlaylistId = null }, vm::refreshPlaylists, { folderPicker.launch(null) }, vm::setDownloadWifiOnly, ::download, downloadPlaylistId)
                 else DownloadsScreen(state, busy, vm, { playlistDownload = true }, { deleteIds = it }, { ratingIds = it }, { showSync = true }) { removeDownloadIds = it }
                 "Settings" -> Settings(vm, state, busy, { folderPicker.launch(null) }, { showDiscard = true })
             }
@@ -333,7 +350,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.8.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.9.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {
