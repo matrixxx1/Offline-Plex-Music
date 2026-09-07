@@ -9,6 +9,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Rating
@@ -40,7 +41,8 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var player: ExoPlayer
     private var session: MediaLibrarySession? = null
     private val subscriptions = mutableMapOf<MediaSession.ControllerInfo, MutableSet<String>>()
-    private val planner = RadioPlanner()
+    private val planner = RadioBuffer()
+    private var appending = false
     private var radio = false
     private var removingIds: Set<String> = emptySet()
     private var scopeIds: Set<String>? = null
@@ -56,7 +58,10 @@ class PlaybackService : MediaLibraryService() {
         player.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
         player.setHandleAudioBecomingNoisy(true)
         player.setWakeMode(C.WAKE_MODE_LOCAL)
-        session = MediaLibrarySession.Builder(this, player, CarCallback()).setMediaButtonPreferences(listOf(
+        session = MediaLibrarySession.Builder(this, object : ForwardingPlayer(player) {
+            override fun stop() { stopPlayback() }
+        }, CarCallback()).setMediaButtonPreferences(listOf(
+            CommandButton.Builder(CommandButton.ICON_STOP).setDisplayName("Stop playback").setSessionCommand(SessionCommand(STOP, Bundle.EMPTY)).build(),
             CommandButton.Builder(CommandButton.ICON_STAR_UNFILLED).setDisplayName("Rate 1 star · queued").setSessionCommand(SessionCommand(RATE_ONE, Bundle.EMPTY)).build(),
             CommandButton.Builder(CommandButton.ICON_STAR_FILLED).setDisplayName("Rate 5 stars · queued").setSessionCommand(SessionCommand(RATE_FIVE, Bundle.EMPTY)).build()
         )).setSessionActivity(PendingIntent.getActivity(this, 0,
@@ -66,17 +71,25 @@ class PlaybackService : MediaLibraryService() {
                 status.value = status.value.copy(trackId = player.currentMediaItem?.mediaId, playing = player.isPlaying, radio = radio)
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                if (radio && player.currentMediaItemIndex >= player.mediaItemCount - 2) appendTask()
+                if (radio && mediaItem != null && player.currentMediaItemIndex >= player.mediaItemCount - 2) appendTask()
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED && radio) { appendTask(); player.prepare(); player.play() }
+                if (playbackState == Player.STATE_ENDED && radio) {
+                    appendTask()
+                    if (radio && player.mediaItemCount > 0) { player.prepare(); player.play() } else stopPlayback()
+                }
+            }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) stopPlayback()
             }
             override fun onPlayerError(error: PlaybackException) {
-                status.value = status.value.copy(error = "Playback failed (${error.errorCodeName}). Check file access or Plex connection, then retry or skip.")
+                stopPlayback()
+                status.value = status.value.copy(error = "Playback failed (${error.errorCodeName}). Check file access or Plex connection, then tap a track to retry.")
             }
         })
         scope.launch {
             var previousOffline = musicStore.state.value.offline
+            var previousCatalog: LibraryState? = null
             musicStore.state.collect { state ->
                 if (state.offline && !previousOffline) {
                     // Rebuild URIs too: a previously queued stream may have since downloaded.
@@ -93,8 +106,11 @@ class PlaybackService : MediaLibraryService() {
                     player.prepare(); player.playWhenReady = wasPlaying
                 }
                 previousOffline = state.offline
-                val catalog = CarCatalog(state)
-                subscriptions.values.flatMap { it }.distinct().forEach { parent -> session?.notifyChildrenChanged(parent, catalog.children(parent).size, null) }
+                if (subscriptions.isNotEmpty() && (previousCatalog?.tracks != state.tracks || previousCatalog?.playlists != state.playlists || previousCatalog?.offline != state.offline)) {
+                    val catalog = CarCatalog(state)
+                    subscriptions.values.flatMap { it }.distinct().forEach { parent -> session?.notifyChildrenChanged(parent, catalog.children(parent).size, null) }
+                }
+                previousCatalog = state
                 val index = player.currentMediaItemIndex
                 val current = player.currentMediaItem
                 val updated = state.tracks.find { it.id == current?.mediaId }
@@ -105,7 +121,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
     fun reloadConnection() {
-        radio = false; player.stop(); player.clearMediaItems()
+        stopPlayback()
         config = musicStore.credentials.read()
         http.setDefaultRequestProperties(mapOf("X-Plex-Token" to config.token))
     }
@@ -118,10 +134,11 @@ class PlaybackService : MediaLibraryService() {
         return super.onStartCommand(intent, flags, startId)
     }
     fun startRadio(ids: Set<String>? = null) {
-        scopeIds = ids; planner.reset(); radio = true
-        player.clearMediaItems(); appendTask(); appendTask()
+        radio = false; scopeIds = ids; planner.reset()
+        player.stop(); player.clearMediaItems()
+        radio = true; appendTask(); appendTask()
         status.value = status.value.copy(error = "")
-        player.prepare(); player.play()
+        if (player.mediaItemCount > 0) { player.prepare(); player.play() } else stopPlayback()
     }
     fun playTracks(tracks: List<Track>, start: Int = 0) {
         radio = false; scopeIds = null
@@ -139,13 +156,17 @@ class PlaybackService : MediaLibraryService() {
         }
     }
     private fun appendTask() {
-        val s = musicStore.state.value
-        val pool = s.tracks.filter { it.id !in removingIds && (scopeIds == null || it.id in scopeIds!!) && (!s.offline || it.downloaded) && (it.downloaded || it.part.isNotBlank()) }
-        val next = planner.next(pool, s.mode, s.twoTrack).mapNotNull { media(it) }
-        if (next.isEmpty()) { radio = false; return }
-        player.addMediaItems(next)
-        // Keep bounded history without losing the previous button.
-        if (player.currentMediaItemIndex > 100) player.removeMediaItems(0, player.currentMediaItemIndex - 50)
+        if (!radio || appending) return
+        appending = true
+        try {
+            val s = musicStore.state.value
+            val pool = s.tracks.filter { it.id !in removingIds && (scopeIds == null || it.id in scopeIds!!) && (!s.offline || it.downloaded) && (it.downloaded || (it.part.isNotBlank() && config.url.isNotBlank())) }
+            val next = planner.next(pool, s.mode, s.twoTrack).mapNotNull { media(it) }
+            if (next.isEmpty()) { radio = false; return }
+            player.addMediaItems(next)
+            // Keep bounded history without losing the previous button.
+            if (player.currentMediaItemIndex > 100) player.removeMediaItems(0, player.currentMediaItemIndex - 50)
+        } finally { appending = false }
     }
     private fun media(t: Track): MediaItem? {
         val uri = if (t.downloaded) t.localUri else {
@@ -176,7 +197,9 @@ class PlaybackService : MediaLibraryService() {
             scopeIds = null; planner.reset(); radio = true
             musicStore.update { it.copy(mode = queue.mode) }
             val s = musicStore.state.value
-            resolved = (planner.next(queue.tracks, s.mode, s.twoTrack) + planner.next(queue.tracks, s.mode, s.twoTrack)).mapNotNull { media(it) }
+            val playable = queue.tracks.filter { it.downloaded || config.url.isNotBlank() }
+            resolved = (planner.next(playable, s.mode, s.twoTrack) + planner.next(playable, s.mode, s.twoTrack)).mapNotNull { media(it) }
+            if (resolved.isEmpty()) radio = false
             index = 0
         } else {
             radio = false; scopeIds = null
@@ -191,7 +214,7 @@ class PlaybackService : MediaLibraryService() {
     private inner class CarCallback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
-                .add(SessionCommand(RATE_ONE, Bundle.EMPTY)).add(SessionCommand(RATE_FIVE, Bundle.EMPTY)).build()
+                .add(SessionCommand(STOP, Bundle.EMPTY)).add(SessionCommand(RATE_ONE, Bundle.EMPTY)).add(SessionCommand(RATE_FIVE, Bundle.EMPTY)).build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller).setAvailableSessionCommands(commands)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS).build()
         }
@@ -243,6 +266,7 @@ class PlaybackService : MediaLibraryService() {
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
         override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+            if (customCommand.customAction == STOP) { stopPlayback(); return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS)) }
             val stars = when (customCommand.customAction) { RATE_ONE -> 1f; RATE_FIVE -> 5f; else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED)) }
             return onSetRating(session, controller, StarRating(5, stars))
         }
@@ -258,9 +282,21 @@ class PlaybackService : MediaLibraryService() {
         removingIds = removingIds - ids
         if (radio && player.mediaItemCount - player.currentMediaItemIndex <= 2) appendTask()
     }
+    fun stopPlayback() {
+        radio = false; planner.reset(); scopeIds = null
+        player.pause(); player.stop(); player.clearMediaItems()
+        status.value = Playing()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!player.playWhenReady || player.mediaItemCount == 0 || player.playerError != null) stopPlayback()
+        super.onTaskRemoved(rootIntent)
+    }
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
     override fun onDestroy() { instance = null; scope.cancel(); session?.release(); player.release(); status.value = Playing(); super.onDestroy() }
     companion object {
+        const val STOP = "com.m3.pocketmusic.STOP"
         const val RATE_ONE = "com.m3.pocketmusic.RATE_ONE"
         const val RATE_FIVE = "com.m3.pocketmusic.RATE_FIVE"
         var instance: PlaybackService? = null

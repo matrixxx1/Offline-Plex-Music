@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- Replace the smart download picker and track/group download buttons with Plex playlist selection. Refresh playlist membership and new tracks without a full library scan; queue missing songs once, retaining Wi-Fi-only by default.
+- Keep track/artist/album/genre/rating/all local cleanup. Add filtered/selected rating, manual rating sync, and separately confirmed phone/Plex deletion directly in Downloads.
+- Add Stop playback on the phone and car. Platform Stop, permanent audio-focus loss, and playback errors clear radio/queue and release foreground playback. Empty radio selections no longer prepare an empty player.
+- Feed large radio groups into the media player in bounded chunks, guard reentrant queue changes, and avoid rebuilding car catalogs for download-status-only updates.
+- Preserve app identity, existing download records, encrypted Plex connection, and queued ratings when installing over the prior APK.
+
+
 ## 0.7.0
 
 - Add Only download on Wi-Fi, enabled by default for new installs and upgrades, in the smart-download preview, Transfers, and Settings.

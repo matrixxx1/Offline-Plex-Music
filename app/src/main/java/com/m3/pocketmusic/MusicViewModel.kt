@@ -103,7 +103,21 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             progress.value = "Loading Plex playlists"
             val playlistResult = runCatching { api.playlists() }
             playlistResult.getOrNull()?.let { lists -> store.update { it.copy(playlists = it.playlists.filterNot { p -> p.plex } + lists) } }
-            "Imported ${loaded.size} tracks. Open Library and tap a track to stream, or use its download button for offline listening." + if (playlistResult.isFailure) " Playlist import failed; existing playlists were kept." else " Plex playlists updated."
+            "Imported ${loaded.size} tracks. Open Library and tap a track to stream, or download Plex playlists for offline listening." + if (playlistResult.isFailure) " Playlist import failed; existing playlists were kept." else " Plex playlists updated."
+    }
+    fun refreshPlaylists() = task {
+        withContext(Dispatchers.IO) {
+            check(!state.value.offline) { "Turn off Offline only to refresh playlists." }
+            val api = PlexApi(config); api.verifyServer()
+            progress.value = "Loading Plex playlists"
+            val (lists, tracks) = api.playlistsWithTracks()
+            store.update { s ->
+                val existing = s.tracks.map { it.id }.toSet()
+                s.copy(playlists = s.playlists.filterNot { it.plex } + lists,
+                    tracks = s.tracks + tracks.filter { it.id !in existing })
+            }
+            "${lists.size} Plex playlists refreshed. Select playlists to download."
+        }
     }
     fun syncRatings() = task {
         withContext(Dispatchers.IO) {

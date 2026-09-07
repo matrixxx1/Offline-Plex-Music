@@ -138,7 +138,7 @@ class MusicInstrumentedTest {
         val audio = File(context.filesDir, "test-audio.wav").readBytes()
         val socket = ServerSocket(0)
         val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val holdSecond = java.util.concurrent.atomic.AtomicBoolean(true)
+        val holdSecond = java.util.concurrent.atomic.AtomicBoolean(false)
         val secondStarted = java.util.concurrent.CountDownLatch(1)
         val releaseSecond = java.util.concurrent.CountDownLatch(1)
         val thread = Thread {
@@ -169,20 +169,23 @@ class MusicInstrumentedTest {
             folder.listFiles().forEach { assertTrue(it.delete()) }
             store.credentials.save(PlexConfig("http://127.0.0.1:${socket.localPort}", "test-token", "test-server"))
             val tracks = (1..2).map { Track("download:$it", "Download $it", remoteKey = it.toString(), part = "/audio/$it.wav", extension = "wav", bytes = audio.size.toLong()) }
-            store.update { LibraryState(tracks = tracks, folder = tree.toString()) }
+            store.update { LibraryState(tracks = tracks, folder = tree.toString(), playlists = listOf(Playlist("plex:first", "First playlist", listOf("download:1"), true), Playlist("plex:both", "Both songs", tracks.map { it.id }, true))) }
             compose.runOnUiThread { PlaybackService.instance?.reloadConnection() }
             compose.runOnUiThread { compose.activity.viewModelStore.clear() }
             compose.activityRule.scenario.recreate()
             compose.onNodeWithText("Download 1", useUnmergedTree = true).performClick()
             compose.waitUntil(15_000) { PlaybackService.status.value.playing }
             assertTrue(requests.any { it.startsWith("GET /audio/1.wav") })
-            compose.onNodeWithContentDescription("Pause").performClick()
+            compose.onNodeWithText("Stop playback").performClick()
             val vm = MusicViewModel(context.applicationContext as MusicApp)
             // Turn Wi-Fi off on this dedicated emulator. The default policy must queue without HTTP.
             val audioRequests = requests.count { it.startsWith("GET /audio/") }
             shell("svc wifi disable")
             compose.waitUntil(15_000) { !onWifi() }
-            compose.onNodeWithTag("track-download-download:1").performClick()
+            compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("Download Plex playlists").performClick()
+            compose.onNodeWithTag("download-playlist-plex:first").performClick()
+            compose.onNodeWithTag("playlist-download-confirm").performClick()
             compose.waitUntil { store.state.value.downloads.any { it.id == "download:1" } }
             Thread.sleep(1500)
             assertFalse(store.state.value.tracks.first().downloaded)
@@ -193,22 +196,19 @@ class MusicInstrumentedTest {
             // No Resume action: WorkManager automatically starts the waiting queue.
             compose.waitUntil(45_000) { store.state.value.tracks.first().downloaded || store.state.value.downloads.any { it.state == "Failed" } }
             assertTrue(store.state.value.downloads.toString(), store.state.value.tracks.first().downloaded)
-            // Complete the second download through the reviewed per-artist smart picker.
-            compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
-            compose.onNodeWithText("Smart download from Plex").performClick()
-            compose.onNodeWithTag("smart-category-ARTIST").performScrollTo().performClick()
-            compose.onNodeWithTag("smart-amount-group").performScrollTo().performClick()
-            compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("1")
-            compose.onNodeWithTag("smart-preview").performClick()
-            compose.onNodeWithTag("smart-track-download:1").assertDoesNotExist()
-            compose.onNodeWithTag("smart-track-download:2").assertExists()
-            compose.onNodeWithTag("smart-download-confirm").performClick()
+            // Arm interruption only now: streaming preloads must not consume the download latch.
+            holdSecond.set(true)
+            // The overlapping playlist skips the file already downloaded.
+            compose.onNodeWithText("Download Plex playlists").performClick()
+            compose.onNodeWithTag("download-playlist-plex:both").performClick()
+            compose.onNodeWithText("Queue 1 songs").assertExists()
+            compose.onNodeWithTag("playlist-download-confirm").performClick()
             compose.waitUntil(15_000) { secondStarted.count == 0L }
             shell("svc wifi disable")
             compose.waitUntil(15_000) { !onWifi() }
             releaseSecond.countDown()
             try { compose.waitUntil(15_000) { store.state.value.downloads.any { it.id == "download:2" && it.state == "Queued" } } }
-            catch (e: Exception) { throw AssertionError("Interrupted queue: ${store.state.value.downloads}; completed=${store.state.value.tracks.filter { it.downloaded }.map { it.id }}", e) }
+            catch (e: AssertionError) { throw AssertionError("Interrupted queue: ${store.state.value.downloads}; completed=${store.state.value.tracks.filter { it.downloaded }.map { it.id }}", e) }
             assertFalse(store.state.value.tracks.last().downloaded)
             assertTrue(store.state.value.tracks.first().downloaded)
             shell("svc wifi enable")
@@ -265,56 +265,29 @@ class MusicInstrumentedTest {
         val caps = manager.getNetworkCapabilities(manager.activeNetwork)
         return caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true && !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
     }
-    @Test fun smartDownloadReviewsGenreSamplesAndSelectsExistingMoodTags() {
-        val tracks = (1..6).map { n -> Track("smart:$n", "Sample song $n", "Artist ${if (n <= 3) "A" else "B"}", "Sample Album",
-            remoteKey = "$n", part = "/audio/$n", genres = listOf(if (n <= 3) "Rock" else "Jazz"),
-            moods = listOf(if (n % 2 == 0) "Happy" else "Sad"), bytes = 4_000_000, pendingRating = 1) }
-        store.update { LibraryState(tracks = tracks) }
+    @Test fun playlistDownloadsSkipExistingAndQueuedSongsAndPreserveRatings() {
+        val tracks = (1..4).map { n -> Track("sample:$n", "Song $n", remoteKey = "$n", part = "/audio/$n", pendingRating = 1,
+            localUri = if (n == 1) "file:///existing.wav" else "") }
+        store.update { LibraryState(tracks = tracks, downloads = listOf(DownloadJob("sample:2")), playlists = listOf(
+            Playlist("plex:a", "Road trip", tracks.take(3).map { it.id }, true),
+            Playlist("plex:b", "Favorites", tracks.drop(2).map { it.id }, true),
+            Playlist("local", "Local only", listOf("sample:4")))) }
         compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Smart download from Plex").performClick()
-        compose.onNodeWithTag("smart-category-GENRE").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-amount-group").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("1")
-        compose.onNodeWithTag("smart-count").performImeAction()
-        screenshot("smart-download-setup")
-        compose.onNodeWithTag("smart-preview").performClick()
-        compose.onNodeWithText("Download 2 songs").assertExists()
-        val previewIds = tracks.filter { compose.onAllNodesWithTag("smart-track-${it.id}").fetchSemanticsNodes().isNotEmpty() }.map { it.id }
-        assertEquals(2, previewIds.size)
-        assertEquals(2, tracks.filter { it.id in previewIds }.map { it.genres.first() }.distinct().size)
-        compose.onNodeWithTag("smart-track-${previewIds.first()}").performClick()
-        compose.onNodeWithText("Download 1 songs").assertExists()
-        compose.onNodeWithText("← Edit selection").performClick()
-        compose.onNodeWithTag("smart-category-MOOD").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-choose-groups").performScrollTo().performClick()
-        compose.onNodeWithText("Clear", useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("smart-group-search").performTextInput("Hap")
-        compose.onNodeWithText("Happy", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Done", useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("smart-amount-all").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-preview").performClick()
-        compose.onNodeWithText("Download 3 songs").assertExists()
-        compose.onNodeWithTag("smart-track-smart:1").assertDoesNotExist()
-        compose.onNodeWithTag("smart-track-smart:2").assertExists()
-        compose.onNodeWithTag("smart-download-confirm").assertIsNotEnabled()
-        screenshot("smart-download-moods")
-        assertTrue(store.state.value.downloads.isEmpty())
-        assertTrue(store.state.value.tracks.all { it.pendingRating == 1 && !it.downloaded })
+        compose.onNodeWithText("Download Plex playlists").performClick()
+        compose.onNodeWithTag("download-playlist-local").assertDoesNotExist()
+        compose.onNodeWithTag("download-playlist-plex:a").performClick()
+        compose.onNodeWithTag("download-playlist-plex:b").performClick()
+        compose.onNodeWithText("Queue 2 songs").assertExists()
+        compose.onNodeWithTag("playlist-download-confirm").assertIsNotEnabled()
+        screenshot("playlist-downloads")
+        assertEquals(1, store.state.value.downloads.size)
+        assertTrue(store.state.value.tracks.all { it.pendingRating == 1 })
     }
-    @Test fun smartDownloadRejectsInvalidCountsAndEmptyGroupSelection() {
+    @Test fun playlistDownloadsEmptySelectionCannotQueue() {
         compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Smart download from Plex").performClick()
-        compose.onNodeWithTag("smart-amount-total").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-count").performScrollTo().performTextReplacement("0")
-        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
-        compose.onNodeWithTag("smart-count").performTextReplacement("2")
-        compose.onNodeWithTag("smart-category-GENRE").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-choose-groups").performScrollTo().performClick()
-        compose.onNodeWithText("Clear", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Done", useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
-        compose.onNodeWithTag("smart-category-MOOD").performScrollTo().performClick()
-        compose.onNodeWithTag("smart-preview").assertIsNotEnabled()
+        compose.onNodeWithText("Download Plex playlists").performClick()
+        compose.onNodeWithText("No Plex playlists found.", substring = true).assertExists()
+        compose.onNodeWithTag("playlist-download-confirm").assertIsNotEnabled()
         assertTrue(store.state.value.downloads.isEmpty())
     }
     @Test fun savedPlexLoginSurvivesRecreationEncryptedAndCanResetIndependently() {

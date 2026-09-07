@@ -78,6 +78,16 @@ class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpUR
         Playlist("plex:$key", p.getString("title"), pages("/playlists/${encode(key)}/items")
             .filter { it.optString("type") == "track" }.map { "plex:${config.serverId}:${it.getString("ratingKey")}" }, true)
     }
+    fun playlistsWithTracks(): Pair<List<Playlist>, List<Track>> {
+        val tracks = linkedMapOf<String, Track>()
+        val lists = pages("/playlists?playlistType=audio").map { p ->
+            val key = p.getString("ratingKey")
+            val songs = pages("/playlists/${encode(key)}/items").filter { it.optString("type") == "track" }.map { parseTrack(it) }
+            songs.forEach { tracks[it.id] = it }
+            Playlist("plex:$key", p.getString("title"), songs.map { it.id }, true)
+        }
+        return lists to tracks.values.toList()
+    }
     fun metadata(key: String): JSONObject = request("/library/metadata/${encode(key)}").getJSONArray("Metadata").getJSONObject(0)
     fun rate(track: Track, stars: Int) {
         require(track.remoteKey.isNotBlank() && stars in 0..5)

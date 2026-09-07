@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
     val playing by PlaybackService.status.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf("Library") }
-    var smartDownload by remember { mutableStateOf(false) }
+    var playlistDownload by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("Tracks") }
     var groupValue by remember { mutableStateOf<String?>(null) }
@@ -144,8 +144,9 @@ class MainActivity : ComponentActivity() {
                     IconButton(onClick = { vm.message.value = "" }) { Icon(Icons.Default.Close, "Dismiss message") }
                 }
             }
+            if (playing.error.isNotBlank() && now == null) Text(playing.error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             when (tab) {
-                "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) }, { tab = "Downloads"; smartDownload = true })
+                "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) }, { tab = "Downloads"; playlistDownload = true })
                 "Library" -> {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { tab = "Plex" }) { Text(if (connection.serverId.isBlank()) "Connect Plex" else "Plex connection") }
@@ -172,7 +173,7 @@ class MainActivity : ComponentActivity() {
                     }
                     if (groupValue != null) TextButton(onClick = { groupValue = null; selected = emptySet() }) { Text("← $group / $groupValue") }
                     if (activeSelection.isNotEmpty()) {
-                        SelectionBar(activeSelection.size, { ratingIds = activeSelection }, { download(activeSelection) },
+                        SelectionBar(activeSelection.size, { ratingIds = activeSelection },
                             { deleteIds = activeSelection }, { playlistIds = visible.filter { it.id in activeSelection }.map { it.id } }, { selected = emptySet() }, busy)
                         if (state.tracks.any { it.id in activeSelection && it.downloaded }) TextButton(onClick = { removeDownloadIds = activeSelection }, enabled = !busy) { Text("Remove selected downloads") }
                         if (playlist != null && !playlist.plex) TextButton(onClick = { vm.removeFromPlaylist(playlist.id, activeSelection); selected = emptySet() }) { Text("Remove from playlist") }
@@ -192,7 +193,6 @@ class MainActivity : ComponentActivity() {
                             Row(Modifier.fillMaxWidth().clickable { groupValue = key; selected = emptySet() }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(tracks.all { it.id in selected }, { checked -> selected = if (checked) selected + tracks.map { it.id } else selected - tracks.map { it.id }.toSet() })
                                 Column(Modifier.weight(1f)) { Text(label, fontWeight = FontWeight.SemiBold); Text("${tracks.size} tracks • ${tracks.count { it.downloaded }} offline", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary) }
-                                IconButton(onClick = { download(tracks.map { it.id }.toSet()) }, enabled = !busy && !state.offline && tracks.any { !it.downloaded && it.part.isNotBlank() }) { Icon(painterResource(R.drawable.ic_download), "Download all by $label") }
                                 IconButton(onClick = { removeDownloadIds = tracks.map { it.id }.toSet() }, enabled = !busy && tracks.any { it.downloaded }) { Icon(Icons.Default.Delete, "Remove downloads by $label") }
                             }
                         } }
@@ -200,8 +200,8 @@ class MainActivity : ComponentActivity() {
                         LazyColumn(Modifier.weight(1f)) { items(visible, key = { it.id }) { track ->
                             TrackRow(track, track.id in activeSelection, track.id == now?.id, { checked -> selected = if (checked) selected + track.id else selected - track.id },
                                 { play { PlaybackService.instance?.playTracks(visible, visible.indexOf(track)) } }, { ratingIds = setOf(track.id) },
-                                { if (track.downloaded) removeDownloadIds = setOf(track.id) else download(setOf(track.id)) },
-                                !busy && (track.downloaded || (!state.offline && track.part.isNotBlank() && state.downloads.none { it.id == track.id && it.state != "Failed" })))
+                                { removeDownloadIds = setOf(track.id) },
+                                !busy && track.downloaded)
                             if (playlist != null && !playlist.plex && track.id in activeSelection) Row {
                                 TextButton(onClick = { vm.movePlaylistTrack(playlist.id, track.id, -1) }) { Text("Move up") }
                                 TextButton(onClick = { vm.movePlaylistTrack(playlist.id, track.id, 1) }) { Text("Move down") }
@@ -211,7 +211,10 @@ class MainActivity : ComponentActivity() {
                 }
                 "Playlists" -> {
                     Text("Plex playlists are imported when you refresh. Create local playlists from selected tracks, and use them offline.", fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
-                    Button(onClick = { playlistIds = emptyList() }) { Text("New playlist") }
+                    Row {
+                        Button(onClick = { tab = "Downloads"; playlistDownload = true }) { Text("Download Plex playlists") }
+                        TextButton(onClick = { playlistIds = emptyList() }) { Text("New playlist") }
+                    }
                     LazyColumn { items(state.playlists, key = { it.id }) { p ->
                         Row(Modifier.fillMaxWidth().clickable { playlistId = p.id; tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) { Text(p.name, fontSize = 18.sp); Text("${p.tracks.size} tracks • ${if (p.plex) "Plex" else "On this device"}", fontSize = 12.sp) }
@@ -219,9 +222,9 @@ class MainActivity : ComponentActivity() {
                         }
                     } }
                 }
-                "Downloads" -> if (smartDownload) SmartDownloadScreen(state, busy, connection.serverId.isNotBlank(),
-                    { smartDownload = false }, vm::refresh, { folderPicker.launch(null) }, vm::setDownloadWifiOnly, ::download)
-                else DownloadsScreen(state, busy, vm, { smartDownload = true }) { removeDownloadIds = it }
+                "Downloads" -> if (playlistDownload) PlaylistDownloadScreen(state, busy, connection.serverId.isNotBlank(),
+                    { playlistDownload = false }, vm::refreshPlaylists, { folderPicker.launch(null) }, vm::setDownloadWifiOnly, ::download)
+                else DownloadsScreen(state, busy, vm, { playlistDownload = true }, { deleteIds = it }, { ratingIds = it }, { showSync = true }) { removeDownloadIds = it }
                 "Settings" -> Settings(vm, state, busy, { folderPicker.launch(null) }, { showDiscard = true })
             }
         }
@@ -277,16 +280,16 @@ class MainActivity : ComponentActivity() {
             Text("${if (t.downloaded) "↓ On device" else "Plex stream"}  •  ${time(t.duration)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
         }
         TextButton(onClick = rate) { Text("${if (t.rating == 0) "☆" else "${t.ratingText}★"}${if (t.pendingRating != null) " ·" else ""}") }
-        IconButton(onClick = transfer, enabled = transferEnabled, modifier = Modifier.testTag("track-download-${t.id}")) {
+        if (t.downloaded) IconButton(onClick = transfer, enabled = transferEnabled, modifier = Modifier.testTag("track-download-${t.id}")) {
             if (t.downloaded) Icon(Icons.Default.Delete, "Remove download: ${t.title}") else Icon(painterResource(R.drawable.ic_download), "Download: ${t.title}")
         }
     }
 }
-@Composable private fun SelectionBar(count: Int, rate: () -> Unit, download: () -> Unit, delete: () -> Unit, playlist: () -> Unit, clear: () -> Unit, busy: Boolean) {
+@Composable private fun SelectionBar(count: Int, rate: () -> Unit, delete: () -> Unit, playlist: () -> Unit, clear: () -> Unit, busy: Boolean) {
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)).padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) { Text("$count selected", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); TextButton(onClick = clear) { Text("Clear") } }
         Row(Modifier.horizontalScroll(rememberScrollState())) {
-            TextButton(onClick = rate) { Text("Rate") }; TextButton(onClick = download, enabled = !busy) { Text("Download") }
+            TextButton(onClick = rate) { Text("Rate") }
             TextButton(onClick = playlist) { Text("+ Playlist") }; TextButton(onClick = delete, enabled = !busy) { Text("Delete") }
         }
     }
@@ -304,6 +307,7 @@ class MainActivity : ComponentActivity() {
                 IconButton(onClick = { controller?.seekToNextMediaItem() }) { Icon(painterResource(R.drawable.ic_next), "Next track") }
             }
             Slider(value = position.coerceIn(0, duration.coerceAtLeast(1)).toFloat(), onValueChange = { controller?.seekTo(it.toLong()); position = it.toLong() }, valueRange = 0f..duration.coerceAtLeast(1).toFloat(), modifier = Modifier.height(24.dp))
+            TextButton(onClick = { PlaybackService.instance?.stopPlayback() }) { Text("Stop playback") }
             Row { Text("${time(position)} / ${time(duration)}", fontSize = 10.sp, modifier = Modifier.weight(1f)); Text(if (playing.radio) "Radio • Queue ›" else "Queue ›", fontSize = 11.sp, modifier = Modifier.clickable(onClick = queue)) }
             if (playing.error.isNotBlank()) Text(playing.error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
         }
@@ -329,7 +333,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.7.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.8.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

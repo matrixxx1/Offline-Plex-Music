@@ -17,7 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@Composable fun DownloadsScreen(state: LibraryState, busy: Boolean, vm: MusicViewModel, smartDownload: () -> Unit, remove: (Set<String>) -> Unit) {
+@Composable fun DownloadsScreen(state: LibraryState, busy: Boolean, vm: MusicViewModel, playlistDownload: () -> Unit, delete: (Set<String>) -> Unit, rate: (Set<String>) -> Unit, sync: () -> Unit, remove: (Set<String>) -> Unit) {
     var queueTab by rememberSaveable { mutableStateOf(state.downloads.isNotEmpty()) }
     var filter by remember { mutableStateOf(DownloadFilter.ALL) }
     var key by remember { mutableStateOf<String?>(null) }
@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.sp
     }
     val selection = selected.intersect(filtered.map { it.id }.toSet())
     Column(Modifier.fillMaxSize()) {
-        Button(onClick = smartDownload, modifier = Modifier.fillMaxWidth()) { Text("Smart download from Plex") }
+        Button(onClick = playlistDownload, modifier = Modifier.fillMaxWidth()) { Text("Download Plex playlists") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(!queueTab, { queueTab = false }, label = { Text("On device (${offline.size})") })
             FilterChip(queueTab, { queueTab = true }, label = { Text("Transfers (${state.downloads.size})") })
@@ -103,6 +103,12 @@ import androidx.compose.ui.unit.sp
                     Text(if (filter == DownloadFilter.ALL && search.isBlank()) "Remove all downloads" else "Remove matching downloads")
                 }
                 if (selection.isNotEmpty()) TextButton(onClick = { remove(selection); selected = emptySet() }, enabled = !busy) { Text("Remove selected (${selection.size})") }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                val targets = selection.ifEmpty { filtered.map { it.id }.toSet() }
+                TextButton(onClick = { rate(targets) }, enabled = !busy && targets.isNotEmpty()) { Text(if (selection.isEmpty()) "Rate matching" else "Rate selected") }
+                TextButton(onClick = { delete(targets) }, enabled = !busy && targets.isNotEmpty()) { Text("Delete from phone / Plex…") }
+                TextButton(onClick = sync, enabled = !busy && state.tracks.any { it.pendingRating != null }) { Text("Sync ratings") }
             }
             if (filtered.isEmpty()) Text(if (key == null && options.isNotEmpty()) "Choose a ${filter.label.lowercase()} to see its downloads." else "No downloaded tracks match these filters.", modifier = Modifier.padding(16.dp), fontSize = 13.sp)
             LazyColumn(Modifier.weight(1f)) { items(filtered, key = { it.id }) { track ->

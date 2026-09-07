@@ -127,6 +127,52 @@ class CarIntegrationTest {
         assertTrue(store.state.value.twoTrack)
         assertTrue(controller.queue!!.all { it.description.mediaId in listOf("car-a", "car-b") })
     }
+    @Test fun carStopClearsRadioQueueAndAllowsFreshPlayback() {
+        connect()
+        main { controller.transportControls.playFromMediaId("radio|RANDOM_ALBUM", Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.radio }
+        main { controller.transportControls.stop() }
+        until { !PlaybackService.status.value.playing && PlaybackService.status.value.trackId == null }
+        assertFalse(PlaybackService.status.value.radio)
+        until { controller.queue.isNullOrEmpty() }
+        main { controller.transportControls.playFromSearch("second car song", Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-b" }
+        main { controller.transportControls.sendCustomAction(PlaybackService.STOP, Bundle.EMPTY) }
+        until { PlaybackService.status.value.trackId == null }
+        assertEquals(3, store.state.value.tracks.size)
+    }
+    @Test fun anotherPlayerTakingAudioFocusClearsRadioWithoutResuming() {
+        connect()
+        main { PlaybackService.instance!!.startRadio(setOf("car-a", "car-b")) }
+        until { PlaybackService.status.value.playing }
+        val audio = context.getSystemService(android.media.AudioManager::class.java)
+        val request = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
+            .setOnAudioFocusChangeListener { }.build()
+        try {
+            main { assertEquals(android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED, audio.requestAudioFocus(request)) }
+            until { PlaybackService.status.value.trackId == null && !PlaybackService.status.value.playing }
+            assertFalse(PlaybackService.status.value.radio)
+            until { controller.queue.isNullOrEmpty() }
+        } finally { main { audio.abandonAudioFocusRequest(request) } }
+        Thread.sleep(500)
+        assertNull(PlaybackService.status.value.trackId)
+        main { controller.transportControls.playFromSearch("first car song", Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing }
+    }
+    @Test fun emptyRadioAndPlaybackErrorStopWithoutRestartLoop() {
+        connect()
+        main { PlaybackService.instance!!.startRadio(emptySet()) }
+        until { PlaybackService.status.value.trackId == null && !PlaybackService.status.value.radio }
+        store.update { it.copy(tracks = listOf(Track("broken", "Broken file", localUri = "file:///missing-audio.wav"))) }
+        main { PlaybackService.instance!!.startRadio() }
+        until { PlaybackService.status.value.error.isNotBlank() }
+        assertFalse(PlaybackService.status.value.playing)
+        assertFalse(PlaybackService.status.value.radio)
+        assertNull(PlaybackService.status.value.trackId)
+        main { controller.transportControls.stop() }
+        assertEquals(1, store.state.value.tracks.size)
+    }
     @Test fun media3BrowserSearchAndIdResolutionRejectForeignUris() {
         lateinit var future: com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaBrowser>
         main { future = androidx.media3.session.MediaBrowser.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync() }

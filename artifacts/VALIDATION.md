@@ -1,24 +1,21 @@
-# Offline Plex Music 0.7.0 validation
+# Offline Plex Music 0.8.0 validation
 
 Verified locally on 2026-09-06 with `build.ps1 -Tasks testDebugUnitTest,lintDebug,assembleDebug,connectedDebugAndroidTest`.
 
-- APK: `Offline-Plex-Music-0.7.0.apk`, debug-signed, Android 8.0+.
-- SHA-256: `8521A7967414AD74771DB0A8D2EF760C9658D8276B6668F09470125C482B9A77`.
-- APK v2 signature verified with the same certificate as prior releases.
-- 64 JVM tests passed: 3 download-policy, 9 smart-download, 8 car catalog, 8 download-filter, 8 radio, 9 rating/persistence, 6 Plex server API, 5 Plex account API, and 8 login-recovery tests.
-- 17 Android 14 emulator integration tests passed on the dedicated `PocketMusic_Test` AVD.
-- Android lint: zero errors, 15 warnings (existing API/dependency, backup, Kotlin convenience, and media-search service items).
-- Wi-Fi policy tests verify default-on behavior for new and migrated libraries, saved opt-out/pause state, and rejection of cellular/unknown routes while Wi-Fi-only is enabled.
-- Emulator integration switches Wi-Fi off before queuing, verifies no audio HTTP requests and a durable queued job, then reenables Wi-Fi and verifies automatic download. It also drops Wi-Fi during a deliberately stalled second file, verifies that it returns to Queued and the completed first file remains, then reconnects and byte-compares both completed files. A repeated interruption check exposed a delayed socket cleanup path; download reads are now bounded and socket interruptions retry durably.
-- The Wi-Fi checkbox and paused queue survive recreation. Preference changes do not resume an explicitly paused queue. Screenshot: screenshots/wifi-download-queue.png. No physical phone, carrier billing, or VPN handover was tested; only the dedicated emulator network was changed and restored.
-- Smart-download tests cover independent per-artist/per-genre sampling, short groups, overlapping genres with deduplication, total limits, exact group matches, separate albums with identical titles, and excluding local/downloaded/queued/unavailable files. Fixed random seeds verify reproducibility and reshuffling.
-- Tag tests cover track/album/artist inheritance, normalization and blank removal, missing metadata, JSON persistence, and reading older libraries without losing ratings or local file links. Fixture requests retain Media/Part data and only use GET.
-- Android tests select per-genre counts, reject invalid counts and empty selections, search for an existing Happy mood, review the exact matching songs, and exclude individual songs without changing library ratings or queuing downloads.
-- A complete per-artist download runs through the new UI against a local HTTP audio fixture. It skips the already-downloaded song and verifies the downloaded bytes. Existing scan/local deletion checks verify queued ratings and remote media remain intact.
-- Reviewed current emulator screenshots: `screenshots/smart-download-setup.png` and `screenshots/smart-download-moods.png`. All songs, metadata and media in tests are synthetic. The count field dismisses its keyboard with Done and the picker accommodates keyboard insets.
-- Existing login-recovery tests still cover encrypted PIN/token persistence, DNS/HTTP retries, expiry, invalid tokens, cancellation, and TLS errors. Existing streaming, radio in background, playlists, manual ratings, and download cleanup tests passed.
-- Existing Android Auto tests cover platform and Media3 browsing/search/playback/ratings without opening a phone activity. No physical car head unit or Desktop Head Unit projection was available; host-specific UI remains unverified.
+- APK: `Offline-Plex-Music-0.8.0.apk`, Android 8.0+, versionCode 8.
+- SHA-256: `5431E538CC0D42671B1E149627A1E93E69811F4D0A1205576E30A9E55BDAA996`.
+- APK v2 signature verified; certificate SHA-256 `a10f7fb8796db24804477c00230ed03b92a46ef0e1e64f1b3000c4cddfa56b13`, matching prior releases. Application ID remains `com.m3.pocketmusic`.
+- 60 JVM tests passed. New cases cover deduplicated playlist downloads, skipping existing/queued/unavailable/local-only files, playlist metadata refresh without a full scan or writes, and preserving large radio groups across bounded chunks, reset, and removal.
+- 20 Android 14 emulator integration tests passed on the dedicated `PocketMusic_Test` AVD.
+- Android lint: zero errors, 15 existing warnings.
+- Car-controller tests cover browse/search/playlist playback, ratings, Stop clearing the radio queue, restarting afterward, empty radio, missing-file playback errors, and permanent audio-focus handoff to another media focus owner without automatic resumption.
+- A car startup regression test exposed selection of an unplayable streaming-only group without Plex configured; radio now excludes those tracks before choosing groups.
+- Radio sends at most 100 new tracks per chunk to the player while retaining the remainder of the selected group. The queue mutation guard prevents recursive appends during player callbacks. Download-status-only updates no longer rebuild the car catalog.
+- Playlist UI tests select overlapping Plex playlists, skip existing and queued songs, reject empty selection, and preserve pending ratings. A local HTTP fixture verifies playlist downloads through the UI, Wi-Fi-only queueing without HTTP on cellular, automatic start on Wi-Fi, interrupted transfer recovery, byte-exact downloaded audio, and local cleanup without server deletion or losing queued ratings.
+- The HTTP interruption fixture now arms its stalled second download only after streaming stops; streaming preloading previously consumed the latch and caused a false failure.
+- Existing login persistence/recovery, background radio, local playlists, reviewed deletion, bulk ratings, scanning, Wi-Fi preference persistence, and paused-queue tests passed.
+- Reviewed synthetic screenshots: `screenshots/playlist-downloads.png` and `screenshots/download-cleanup.png`.
 
-No user Plex server or phone files were accessed during this change. Mood/style availability depends on metadata returned by the user's Plex server; no moods were inferred or written back. Refresh music after upgrading to populate the new tag fields. Smart counts mean new downloads per selected group, not a target total already on the device. A song may match several groups but is queued only once.
+No user Plex server or phone files were accessed. No physical phone was attached, so the original crash stack could not be captured. Tests use Android platform and Media3 media controllers, not a physical Android Auto head unit or projected Desktop Head Unit. The audio-focus test verifies the handoff behavior; it does not prove the cause of the user's original crash.
 
-Reports are under `%LOCALAPPDATA%\PocketMusic-build\app\reports`. GitHub branch and tag CI and the released APK download/checksum are verified separately before publishing.
+Reports are under `%LOCALAPPDATA%\PocketMusic-build\app\reports`. Branch/tag CI and the downloadable GitHub APK checksum are checked before the draft release is published.

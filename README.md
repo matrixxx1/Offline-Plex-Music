@@ -1,6 +1,6 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.7.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.8.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -9,8 +9,8 @@ A native Kotlin/Compose music player for a Plex music library and a folder of lo
 - Visible Plex tab with browser sign-in, server discovery, and one-step connection/import. Manual URL/token setup is available under Advanced connection.
 - Android Auto media browsing, playback, voice search, four radio modes, and queued rating controls. See setup below for sideloaded APKs.
 - Original-quality Plex streaming and bulk downloads, with background playback, notification/headset controls, next, previous, seeking, and a playback queue.
-- Smart downloads by genre, artist, album, or existing Plex mood/style tags: whole groups, a random total, or X new songs per group, with an editable preview and size estimate.
-- Direct download/remove buttons on each track and each artist, album, or genre. Downloads → On device supports filtering and reviewed removal of one track, selected tracks, a whole artist/album/genre, everything below a chosen rating, or all downloaded files.
+- Simple Plex playlist downloads: select one or several audio playlists, then queue their missing songs. Shared songs download once.
+- Remove buttons on downloaded tracks and each artist, album, or genre. Downloads → On device supports filtering and reviewed removal of one track, selected tracks, a whole artist/album/genre, everything below a chosen rating, or all downloaded files.
 - Offline-only mode: plays downloaded and manually added files. Choose a dedicated folder using Android's folder picker. Copy your own files into that folder or subfolders and scan it.
 - Track, artist, album, genre, and playlist browsing; search and select-all apply to the current view. Artist/album/genre checkboxes select the entire group for bulk operations.
 - One-to-five-star ratings. Plex changes are stored durably on the device, coalesced per track, and **only sent when you explicitly choose Sync ratings**. Failed changes stay queued. A new rating made during a sync stays queued too. Local-only music has local ratings.
@@ -32,11 +32,11 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.7.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install `Offline-Plex-Music-0.8.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
-5. Select tracks or whole artists/albums/genres, then **Download**. Permit notifications to see background download status. Copy your own music into the chosen folder and tap **Scan folder** when downloads are finished or canceled.
+5. Open **Downloads → Download Plex playlists**, select playlists, then **Queue N songs**. Permit notifications to see background download status. Copy your own music into the chosen folder and tap **Scan folder** when downloads are finished or canceled.
 6. Tap **Online** at the top to switch to **Offline**. Downloads pause and playback uses only local files. To resume downloads, switch online and use **Downloads → Transfers → Resume / retry**.
 
 ### Recover a Plex login after a network error
@@ -47,32 +47,23 @@ The app retries temporary network/server errors and can use Plex's alternate HTT
 
 Version 0.4.0 and earlier did not save unfinished logins, so an already-lost login cannot be recovered after upgrading. Begin one new sign-in on 0.5.0 or newer; subsequent retries preserve it.
 
-### Smart downloads
+### Download Plex playlists
 
-Open **Downloads → Smart download from Plex**, or use the same button on your saved Plex connection.
+Open **Downloads → Download Plex playlists** (also available from Plex and Playlists). Create and edit your audio playlists in Plex, then tap **Refresh Plex playlists** here. Refresh loads playlist membership and newly encountered songs without scanning the whole music library. Select one, several, or all shown playlists, then **Queue N songs**.
 
-1. Choose **All music**, **Genres**, **Artists**, **Albums**, **Moods**, or **Styles**. For groups, use the chooser to search and select one, several, or all groups. Choices come from Plex songs still available to download; blank and duplicate tags are omitted.
-2. Choose **All matching songs**, **Random songs, total**, or **Random songs per genre/artist/album/mood/style**, then enter X. For example: Genres → all genres → Random songs per genre → 10. Artists → selected artists → Random songs per artist → 5. Albums → selected albums → All matching songs downloads the remaining songs from those albums.
-3. Tap **Preview downloads** to see the actual songs and estimated original-file size. Unknown sizes are labeled. Uncheck individual songs to leave them out or use **Reshuffle preview** for another random sample.
-4. Choose a download folder if needed, then tap **Download N songs**. Transfers use the existing durable queue, progress notification, and pause/retry controls.
-
-Counts mean **new downloads**, not a target total on the device. Existing downloads and queued jobs (including failed jobs awaiting retry) are skipped. Per-group sampling selects up to X songs independently from each selected group; smaller groups contribute what they have. A track shared by several genres/tags downloads once, so the total can be less than X times the number of groups. Overlapping tags may make a group appear on more than X of the final songs. The preview stays fixed until you edit or reshuffle it; confirming never silently substitutes different songs.
-
-After upgrading, tap **Refresh Plex music & tags** once to import mood/style metadata. The app uses existing tags Plex returns for tracks, albums, and artists; album/artist tags include their tracks. Happy, angry, and sad appear only if those tags exist in the returned library metadata. The app does not infer moods, create tags, or write them back to Plex. Availability and completeness depend on your Plex library and server metadata. See the [Plex API response customization documentation](https://developer.plex.tv/pms/) and the [PlexAPI audio metadata implementation](https://github.com/pushingkarmaorg/python-plexapi/blob/master/plexapi/audio.py).
-
-Smart download selection runs locally on imported metadata and can be previewed offline. Starting transfers requires online mode and a saved Plex connection. It does not sync ratings, delete files, or change your radio playback mode.
+Downloaded and queued tracks are skipped, and overlapping playlists share one downloaded file. Use Transfers → Resume / retry for failed jobs. Removing a playlist in Plex does not delete its downloaded music. Removing a song locally does not edit the Plex playlist; selecting that playlist again can download the song again. Playlist downloads do not send ratings or delete anything.
 
 ### Manage downloaded music
 
-- Set **Only download on Wi-Fi** in **Downloads → Transfers**, the smart-download preview, or **Settings**. This single saved preference applies to every download, including individual and bulk selections. It is enabled by default for new and existing installs. Adding downloads on mobile data still queues them; they start automatically when Wi-Fi is available. Uncheck it to allow mobile data.
+- Set **Only download on Wi-Fi** in **Downloads → Transfers**, the playlist selector, or **Settings**. This single saved preference applies to every download, including multiple selected playlists. It is enabled by default for new and existing installs. Adding downloads on mobile data still queues them; they start automatically when Wi-Fi is available. Uncheck it to allow mobile data.
 - Changing the preference updates pending transfers. If Wi-Fi is lost during a Wi-Fi-only download, that unfinished file remains queued and restarts when allowed; completed downloads remain intact. **Pause** stays paused across preference changes until **Resume / retry**. Android may delay background jobs; Android 8 uses guarded retry scheduling where newer versions can request Wi-Fi directly.
 - Wi-Fi-only checks the app's active network rather than merely assuming an unmetered connection is Wi-Fi. A VPN must expose a Wi-Fi route without a cellular route; otherwise downloads wait. The app does not bypass the VPN or change your phone's network settings. Wi-Fi marked metered is still Wi-Fi. This option does not restrict streaming or manual Plex imports/rating sync.
-- Tap the download icon on a track or group to save it; tap its trash icon to review removing its local files.
+- Download from Plex playlists; tap a downloaded track or group's trash icon to review removing its local files.
 - Open **Downloads → On device**, then choose **All downloads**, **Artist**, **Album**, **Genre**, or **Rating below**. Choose the artist/album/genre from the dropdown or adjust the rating slider. Search further narrows the list.
 - Rating cleanup is strictly below the selected threshold: below 3★ includes 1★, 2★, and 2.5★, but not 3★. It uses unsynced ratings too. Unrated music is excluded unless **Include unrated tracks** is checked.
 - Uncheck **Include music I added myself** to limit cleanup to Plex downloads. When your own files are included, the confirmation explicitly says they will be deleted from your chosen music folder.
 - Use **Remove matching downloads**, **Remove selected**, or **Remove all downloads** and review the exact list before confirming. These actions remove local files only; they keep Plex copies and queued ratings. Plex tracks remain streamable and can be downloaded again.
-- For permanent Plex-server deletion, use the existing Library selection → **Delete** action and its separate server confirmation.
+- Use **Rate matching / Rate selected**, **Sync ratings**, or **Delete from phone / Plex…** in Downloads for the filtered or selected songs. The deletion dialog lets you choose phone, Plex, or both and requires the separate server confirmation. Library selection → **Delete** is also available.
 
 Plex token help: [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
@@ -84,11 +75,14 @@ For the example “rate an artist one star and remove them”: open Artists, sel
 2. Because this APK comes from GitHub, enable **Unknown sources** in Android Auto's developer settings if it is missing from the car launcher. Open Android Auto settings, expand the version information, tap it ten times, accept developer mode, then open the overflow menu → Developer settings → Unknown sources. Reconnect Android Auto and check Customize launcher. See [Google's sideload testing instructions](https://developer.android.com/training/cars/testing#unknown-sources).
 3. Open **Offline Plex music** on the car display. The four sections are **Library**, **Downloads**, **Playlists**, and **Radio**. Library contains artists, albums, genres, and tracks. Downloads includes your own scanned files.
 4. Use the car's play/pause, next/previous, seek, and voice-search controls. Previous follows normal Android media behavior: after a few seconds it restarts the current song; press again to go to the previous song. Phone controls retain their direct previous-track behavior.
-5. Radio uses the phone's **2 Track limit** setting. The custom **Rate 1 star** and **Rate 5 stars** actions, plus star ratings from hosts that expose them, save on the phone. **Sync ratings** remains manual on the phone. Available custom-action placement depends on your car host.
+5. **Stop playback** clears the queue and releases playback; it is available on the phone and as a car custom action. Switching to another player (permanent audio-focus loss) also stops this player. Temporary interruptions such as navigation prompts retain normal audio-focus behavior.
+6. Radio uses the phone's **2 Track limit** setting. The custom **Rate 1 star** and **Rate 5 stars** actions, plus star ratings from hosts that expose them, save on the phone. **Sync ratings** remains manual on the phone. Available custom-action placement depends on your car host.
 
 Offline mode applies to car browsing, search, and radio. The car interface uses your cached library and can start before the phone UI opens. Set up Plex, manage downloads, sync ratings, and review deletions on the phone. This is Android Auto projection from your phone, not a separate app installed into Android Automotive OS.
 
-Large browse lists use range folders of at most 100 items. Car search returns up to 100 matches; narrow the query for more specific results. A sequential car queue contains up to 500 tracks around the selected song; radio continues selecting new groups. A physical Android Auto head unit / Desktop Head Unit session has not been available for visual verification. Automated tests exercise both the Android platform browser/transport bridge used by car hosts and the Media3 browser.
+Large browse lists use range folders of at most 100 items. Car search returns up to 100 matches; narrow the query for more specific results. A sequential car queue contains up to 500 tracks around the selected song; radio streams groups into the player in chunks of at most 100 tracks, retaining previous-track history without placing a whole large artist or genre in the media session at once. A physical Android Auto head unit / Desktop Head Unit session has not been available for visual verification. Automated tests exercise both the Android platform browser/transport bridge used by car hosts and the Media3 browser.
+
+If an older build is stuck on the car display, while parked use Android Settings → Apps → Offline Plex music → **Force stop**, then reconnect Android Auto. Install the update over the existing app to preserve downloads and queued ratings. The fix was tested through Android media controllers and an audio-focus handoff, but the originally reported physical-phone crash was not captured.
 
 ## Reuse downloads from other apps
 

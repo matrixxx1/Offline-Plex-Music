@@ -42,7 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
                 Text("${state.tracks.count { it.remoteKey.isNotBlank() }} Plex tracks in your library", fontSize = 13.sp)
                 Button(onClick = { vm.refresh() }, enabled = !busy && !state.offline) { Text("Import / refresh music") }
                 OutlinedButton(onClick = openLibrary) { Text("Open library to play") }
-                OutlinedButton(onClick = smartDownload) { Text("Smart download from Plex") }
+                OutlinedButton(onClick = smartDownload) { Text("Download Plex playlists") }
             } }
         }
         if (login.pending) {
@@ -74,7 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
         }
         HorizontalDivider()
         Text("Want to listen offline?", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Text("Choose a music folder, then use download buttons on tracks, artists, albums or genres. You can also copy your own audio into this folder and scan it in Settings.", fontSize = 13.sp)
+        Text("Choose a music folder, then select your Plex playlists in Downloads. You can also copy your own audio into this folder and scan it in Settings.", fontSize = 13.sp)
         OutlinedButton(onClick = chooseFolder, enabled = !busy && state.downloads.isEmpty()) { Text("Choose download folder") }
         Text("Importing and connecting never sync queued ratings or delete music.", fontSize = 12.sp)
     }

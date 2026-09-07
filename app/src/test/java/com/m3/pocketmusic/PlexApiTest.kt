@@ -23,6 +23,9 @@ class PlexApiTest {
             val path = x.requestURI.path
             val response = when {
                 path == "/" -> """{"MediaContainer":{"machineIdentifier":"test-server"}}"""
+                path == "/playlists" -> """{"MediaContainer":{"Metadata":[{"ratingKey":"a","title":"Driving"},{"ratingKey":"b","title":"Favorites"}]}}"""
+                path == "/playlists/a/items" -> """{"MediaContainer":{"Metadata":[${track("1")},${track("2")}]}}"""
+                path == "/playlists/b/items" -> """{"MediaContainer":{"Metadata":[${track("2")}]}}"""
                 path == "/library/sections" -> """{"MediaContainer":{"Directory":[{"type":"artist","key":"1","title":"Music"},{"type":"movie","key":"2","title":"Movies"}]}}"""
                 path == "/library/sections/1/all" -> when {
                     x.requestURI.query.contains("type=8") -> """{"MediaContainer":{"Metadata":[{"ratingKey":"artist","Genre":[{"tag":"Rock"}],"Mood":[{"tag":"Energetic"}],"Style":[{"tag":"Alternative"}]}]}}"""
@@ -49,6 +52,14 @@ class PlexApiTest {
         assertTrue(requests.none { it.second.startsWith("/library/sections/2") })
         assertEquals("test-token", authHeader)
         assertTrue(requests.none { "test-token" in it.second })
+    }
+    @Test fun playlistRefreshLoadsAudioMetadataWithoutScanningWholeLibraryOrWriting() {
+        val (lists, tracks) = api.playlistsWithTracks()
+        assertEquals(listOf("Driving", "Favorites"), lists.map { it.name })
+        assertEquals(listOf("plex:test-server:1", "plex:test-server:2"), tracks.map { it.id })
+        assertEquals(listOf("plex:test-server:2"), lists.last().tracks)
+        assertTrue(tracks.all { it.part.isNotBlank() && it.remoteKey.isNotBlank() })
+        assertTrue(requests.all { it.first == "GET" && it.second.startsWith("/playlists") })
     }
     @Test fun ratingUsesPutAndPlexTenPointScaleThenReadsBack() {
         api.rate(Track("id", "Song", remoteKey = "1"), 1)
