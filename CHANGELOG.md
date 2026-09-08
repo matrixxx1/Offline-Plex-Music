@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0
+
+- Add a full Now playing phone screen with the Android Auto playback/song actions, large cached artwork, timeline, track information, and tappable queue.
+- Add Selected playlist editing for names, membership, occurrence-specific moves/removal, shuffled order, and local copies. Persist selection across activity recreation and keep selected navigation tabs visible.
+- Add explicit Plex playlist sync with entry IDs, duplicate preservation, conflict detection, confirmed-step checkpoints, and final readback. Preserve drafts on refresh/failure; smart playlists remain read-only with local copying available.
+- Fix complete offline downloads failing with "Downloaded size differs from Plex; retry required" when library metadata is stale. Validate the transfer against its own HTTP response length and save actual bytes. Keep incomplete/empty/interrupted transfer protection and Wi-Fi policy intact.
+- Add unit/API and emulator regressions for playlist edits, syncing, partial failure recovery, new phone screens, stale Plex size metadata, and truncated transfers.
+
 ## 0.10.0
 
 - Move Playlists to the second phone and Android Auto browse tab. Add phone playlist play, shuffle, and artist jumps.

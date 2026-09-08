@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PocketMusic(vm: MusicViewModel = viewModel()) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
@@ -70,14 +72,14 @@ class MainActivity : ComponentActivity() {
     val message by vm.message.collectAsStateWithLifecycle()
     val playing by PlaybackService.status.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf("Library") }
+    var tab by rememberSaveable { mutableStateOf("Library") }
     var playlistDownload by remember { mutableStateOf(false) }
     var downloadPlaylistId by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
     var group by remember { mutableStateOf("Tracks") }
     var groupValue by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
-    var playlistId by remember { mutableStateOf<String?>(null) }
+    var playlistId by rememberSaveable { mutableStateOf<String?>(null) }
     var ratingIds by remember { mutableStateOf<Set<String>?>(null) }
     var deleteIds by remember { mutableStateOf<Set<String>?>(null) }
     var removeDownloadIds by remember { mutableStateOf<Set<String>?>(null) }
@@ -89,6 +91,7 @@ class MainActivity : ComponentActivity() {
     // Bind lazily, so editing connection settings does not create a stale playback service.
     var connectPlayback by remember { mutableStateOf(PlaybackService.instance != null) }
     var pendingPlay by remember { mutableStateOf<(() -> Unit)?>(null) }
+    LaunchedEffect(playing.trackId) { if (playing.trackId != null) connectPlayback = true }
     DisposableEffect(connectPlayback) {
         if (!connectPlayback) onDispose { }
         else {
@@ -134,7 +137,7 @@ class MainActivity : ComponentActivity() {
     val now = index?.byId?.get(playing.trackId)
 
     Scaffold(bottomBar = {
-        if (now != null) NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true }, { removeDownloadIds = setOf(now.id) }, { vm.flagDeletion(setOf(now.id), !now.pendingDeletion) }, !busy)
+        if (now != null && tab != "Now playing") NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true }, { removeDownloadIds = setOf(now.id) }, { vm.flagDeletion(setOf(now.id), !now.pendingDeletion) }, !busy, { tab = "Now playing" })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -144,8 +147,9 @@ class MainActivity : ComponentActivity() {
                 }
                 AssistChip(onClick = { vm.settings(offline = !state.offline) }, label = { Text(if (state.offline) "Offline" else "Online") })
             }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Library", "Playlists", "Plex", "Downloads", "Settings").forEach { name -> FilterChip(tab == name, { tab = name }, label = { Text(name) }) }
+            val tabs = listOf("Library", "Playlists", "Now playing", "Selected playlist", "Plex", "Downloads", "Settings")
+            PrimaryScrollableTabRow(selectedTabIndex = tabs.indexOf(tab), edgePadding = 0.dp, divider = {}) {
+                tabs.forEach { name -> Tab(selected = tab == name, onClick = { tab = name }, text = { Text(name) }, modifier = Modifier.testTag("tab-$name")) }
             }
             if (busy || state.downloads.any { it.state == "Downloading" }) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -160,6 +164,12 @@ class MainActivity : ComponentActivity() {
             }
             if (playing.error.isNotBlank() && now == null) Text(playing.error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             when (tab) {
+                "Now playing" -> NowPlayingScreen(now, playing, controller, busy,
+                    { now?.let { ratingIds = setOf(it.id) } }, { now?.let { removeDownloadIds = setOf(it.id) } },
+                    { now?.let { vm.flagDeletion(setOf(it.id), !it.pendingDeletion) } }, { showSync = true }, { tab = "Playlists" })
+                "Selected playlist" -> PlaylistEditorScreen(playlist, state, index?.byId.orEmpty(), busy, vm,
+                    { tab = "Playlists" }, { tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() },
+                    { tracks -> play { PlaybackService.instance?.playTracks(tracks) }; tab = "Now playing" })
                 "Plex" -> PlexScreen(vm, state, busy, { tab = "Library" }, { folderPicker.launch(null) }, { tab = "Downloads"; playlistDownload = true })
                 "Library" -> {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -168,6 +178,7 @@ class MainActivity : ComponentActivity() {
                     }
                     if (playlist != null) Row {
                         TextButton(onClick = { playlistId = null; selected = emptySet() }) { Text("← All music") }
+                        TextButton(onClick = { tab = "Selected playlist" }) { Text("Edit playlist") }
                         if (playlist.plex) TextButton(onClick = { downloadPlaylistId = playlist.id; tab = "Downloads"; playlistDownload = true }, modifier = Modifier.testTag("open-playlist-download")) { Text("Download playlist") }
                     }
                     if (index == null || view == null) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Loading playlist / library…", fontSize = 12.sp) }
@@ -245,6 +256,7 @@ class MainActivity : ComponentActivity() {
                     LazyColumn { items(state.playlists, key = { it.id }) { p ->
                         Row(Modifier.fillMaxWidth().testTag("open-playlist-${p.id}").clickable { playlistId = p.id; tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) { Text(p.name, fontSize = 18.sp); Text("${p.tracks.size} tracks • ${if (p.plex) "Plex" else "On this device"}", fontSize = 12.sp) }
+                            TextButton(onClick = { playlistId = p.id; tab = "Selected playlist" }, modifier = Modifier.testTag("edit-playlist-${p.id}")) { Text("Edit") }
                             if (!p.plex) IconButton(onClick = { vm.deletePlaylist(p.id) }) { Icon(Icons.Default.Delete, "Delete playlist only") }
                         }
                     } }
@@ -345,14 +357,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun NowPlaying(t: Track, playing: Playing, controller: MediaController?, rate: () -> Unit, queue: () -> Unit, removeLocal: () -> Unit, flag: () -> Unit, actionsEnabled: Boolean) {
+@Composable private fun NowPlaying(t: Track, playing: Playing, controller: MediaController?, rate: () -> Unit, queue: () -> Unit, removeLocal: () -> Unit, flag: () -> Unit, actionsEnabled: Boolean, open: () -> Unit) {
     var position by remember { mutableLongStateOf(0L) }; var duration by remember { mutableLongStateOf(t.duration) }
     LaunchedEffect(controller, t.id) { while (true) { position = controller?.currentPosition ?: 0; duration = (controller?.duration?.takeIf { it > 0 } ?: t.duration).coerceAtLeast(0); delay(500) } }
     Surface(tonalElevation = 6.dp) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AlbumArt(t, Modifier.size(42.dp).padding(end = 6.dp))
-                Column(Modifier.weight(1f)) { Text(t.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(t.artist, fontSize = 12.sp) }
+                Column(Modifier.weight(1f).clickable(onClick = open)) { Text(t.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("${t.artist} • Now playing ›", fontSize = 12.sp) }
                 TextButton(onClick = rate) { Text("${t.ratingText}★") }
                 IconButton(onClick = { controller?.seekToPreviousMediaItem() }) { Icon(painterResource(R.drawable.ic_previous), "Previous track") }
                 FilledIconButton(onClick = { controller?.let { if (it.isPlaying) it.pause() else { it.prepare(); it.play() } } }) { if (playing.playing) Icon(painterResource(R.drawable.ic_pause), "Pause") else Icon(Icons.Default.PlayArrow, "Play") }
@@ -389,7 +401,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.10.0 • Original-quality streaming and downloads. Album art is cached as you browse and play, including for offline use; Android may evict the cache when storage is low.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.11.0 • Original-quality streaming and downloads. Album art is cached as you browse and play, including for offline use; Android may evict the cache when storage is low.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

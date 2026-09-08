@@ -51,6 +51,9 @@ import androidx.compose.ui.unit.sp
                 TextButton(onClick = vm::cancelDownloads, enabled = state.downloads.isNotEmpty()) { Text("Cancel queue") }
             }
             Text("Completed files stay on your device when you cancel a transfer.", fontSize = 12.sp)
+            if (state.downloads.any { it.error == "Downloaded size differs from Plex; retry required" }) {
+                Text("The cached Plex size check has been fixed. Tap Resume / retry to retry these earlier failures.", color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+            }
             LazyColumn(Modifier.weight(1f)) { items(state.downloads, key = { it.id }) { job ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                     Text(state.tracks.find { it.id == job.id }?.title ?: "Removed track")

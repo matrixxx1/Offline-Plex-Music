@@ -39,7 +39,9 @@ object LibraryJson {
             put("pendingDeletion", t.pendingDeletion); put("artwork", t.artwork)
         } }))
         put("playlists", JSONArray(s.playlists.map { p -> JSONObject().put("id", p.id).put("name", p.name)
-            .put("tracks", JSONArray(p.tracks)).put("plex", p.plex) }))
+            .put("tracks", JSONArray(p.tracks)).put("plex", p.plex).put("smart", p.smart)
+            .put("pendingSync", p.pendingSync).put("serverName", p.serverName)
+            .put("serverTracks", JSONArray(p.serverTracks)).put("syncError", p.syncError) }))
         put("downloads", JSONArray(s.downloads.map { j -> JSONObject().put("id", j.id).put("state", j.state).put("error", j.error) }))
         put("folder", s.folder); put("offline", s.offline); put("mode", s.mode.name); put("twoTrack", s.twoTrack)
         put("wifiOnlyDownloads", s.wifiOnlyDownloads); put("downloadsPaused", s.downloadsPaused)
@@ -59,7 +61,9 @@ object LibraryJson {
                 moods = t.optJSONArray("moods")?.strings().orEmpty(), styles = t.optJSONArray("styles")?.strings().orEmpty(),
                 pendingDeletion = t.optBoolean("pendingDeletion"), artwork = t.optString("artwork")
             ) }.orEmpty(),
-            playlists = o.optJSONArray("playlists")?.objects()?.map { Playlist(it.getString("id"), it.getString("name"), it.getJSONArray("tracks").strings(), it.optBoolean("plex")) }.orEmpty(),
+            playlists = o.optJSONArray("playlists")?.objects()?.map { Playlist(it.getString("id"), it.getString("name"), it.getJSONArray("tracks").strings(), it.optBoolean("plex"),
+                smart = it.optBoolean("smart"), pendingSync = it.optBoolean("pendingSync"),
+                serverName = it.optString("serverName", it.getString("name")), serverTracks = (it.optJSONArray("serverTracks") ?: it.getJSONArray("tracks")).strings(), syncError = it.optString("syncError")) }.orEmpty(),
             downloads = o.optJSONArray("downloads")?.objects()?.map { DownloadJob(it.getString("id"), it.getString("state"), it.optString("error")) }.orEmpty(),
             folder = o.optString("folder"), offline = o.optBoolean("offline"),
             mode = runCatching { PlayMode.valueOf(o.optString("mode")) }.getOrDefault(PlayMode.RANDOM_TRACK), twoTrack = o.optBoolean("twoTrack"),

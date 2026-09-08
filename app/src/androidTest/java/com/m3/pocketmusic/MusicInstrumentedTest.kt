@@ -82,7 +82,7 @@ class MusicInstrumentedTest {
         compose.onNodeWithText("5★", useUnmergedTree = true).performClick()
         assertEquals(5, store.state.value.tracks.first().localRating)
         assertNull(store.state.value.tracks.first().pendingRating)
-        compose.onNodeWithText("Playlists", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Playlists").performScrollTo().performClick()
         compose.onNodeWithText("New playlist").performClick()
         compose.onNodeWithText("New playlist name").performTextInput("Road trip")
         compose.onNodeWithText("Create", useUnmergedTree = true).performClick()
@@ -100,7 +100,7 @@ class MusicInstrumentedTest {
     }
     @Test fun downloadedFiltersReviewGroupsThresholdsAndIndividualFiles() {
         store.rate(setOf("local:1"), 1)
-        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("2 matching tracks").assertExists()
         compose.onNodeWithText("Artist", useUnmergedTree = true).performClick()
         compose.onNodeWithTag("download-filter-value").performClick()
@@ -179,7 +179,8 @@ class MusicInstrumentedTest {
             assertTrue("Tree ${folder.uri}, type=${folder.type}, write permission=${context.checkCallingOrSelfUriPermission(folder.uri, android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)}", folder.canWrite())
             folder.listFiles().forEach { assertTrue(it.delete()) }
             store.credentials.save(PlexConfig("http://127.0.0.1:${socket.localPort}", "test-token", "test-server"))
-            val tracks = (1..2).map { Track("download:$it", "Download $it", remoteKey = it.toString(), part = "/audio/$it.wav", extension = "wav", bytes = audio.size.toLong()) }
+            // Deliberately stale Plex sizes must not reject a complete response, on either side.
+            val tracks = (1..2).map { Track("download:$it", "Download $it", remoteKey = it.toString(), part = "/audio/$it.wav", extension = "wav", bytes = audio.size.toLong() + if (it == 1) 500 else -500) }
             store.update { LibraryState(tracks = tracks, folder = tree.toString(), playlists = listOf(Playlist("plex:first", "First playlist", listOf("download:1"), true), Playlist("plex:both", "Both songs", tracks.map { it.id }, true))) }
             compose.runOnUiThread { PlaybackService.instance?.reloadConnection() }
             compose.runOnUiThread { compose.activity.viewModelStore.clear() }
@@ -193,7 +194,7 @@ class MusicInstrumentedTest {
             val audioRequests = requests.count { it.startsWith("GET /audio/") }
             shell("svc wifi disable")
             compose.waitUntil(15_000) { !onWifi() }
-            compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
             compose.onNodeWithText("Download Plex playlists").performClick()
             compose.onNodeWithTag("download-playlist-plex:first").performClick()
             compose.onNodeWithTag("playlist-download-options").performClick()
@@ -233,6 +234,7 @@ class MusicInstrumentedTest {
             assertEquals(store.state.value.downloads.toString(), 2, store.state.value.tracks.count { it.downloaded })
             assertEquals(2, folder.listFiles().size)
             store.state.value.tracks.forEach { t ->
+                assertEquals(audio.size.toLong(), t.bytes)
                 assertArrayEquals(audio, context.contentResolver.openInputStream(android.net.Uri.parse(t.localUri))!!.use { it.readBytes() })
             }
             val own = folder.createFile("audio/wav", "My own song.wav")!!
@@ -256,7 +258,7 @@ class MusicInstrumentedTest {
         } finally { releaseSecond.countDown(); shell("svc wifi enable"); socket.close(); thread.join(1000) }
     }
     @Test fun wifiDownloadPreferencePersistsAndDoesNotResumePausedQueue() {
-        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("Transfers (0)").performClick()
         compose.onNodeWithTag("download-wifi-only").assertIsOn().performClick()
         assertFalse(MusicStore(context).state.value.wifiOnlyDownloads)
@@ -268,7 +270,7 @@ class MusicInstrumentedTest {
         screenshot("wifi-download-queue")
         compose.runOnUiThread { compose.activity.viewModelStore.clear() }
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("Transfers (1)").performClick()
         compose.onNodeWithTag("download-wifi-only").assertIsOn()
         compose.onNodeWithText("Queue paused.", substring = true).assertExists()
@@ -288,7 +290,7 @@ class MusicInstrumentedTest {
             Playlist("plex:a", "Road trip", tracks.take(3).map { it.id }, true),
             Playlist("plex:b", "Favorites", tracks.drop(2).map { it.id }, true),
             Playlist("local", "Local only", listOf("sample:4")))) }
-        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("Download Plex playlists").performClick()
         compose.onNodeWithTag("download-playlist-local").assertDoesNotExist()
         compose.onNodeWithTag("download-playlist-plex:a").performClick()
@@ -301,7 +303,7 @@ class MusicInstrumentedTest {
         assertTrue(store.state.value.tracks.all { it.pendingRating == 1 })
     }
     @Test fun playlistDownloadsEmptySelectionCannotQueue() {
-        compose.onNodeWithText("Downloads", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("Download Plex playlists").performClick()
         compose.onNodeWithText("No Plex playlists found.", substring = true).assertExists()
         compose.onNodeWithTag("playlist-download-options").assertIsNotEnabled()
@@ -311,7 +313,7 @@ class MusicInstrumentedTest {
         val tracks = (1..31_382).map { Track("large:$it", "Large song $it", "Artist ${it % 25}", "Album", artistId = "${it % 25}",
             remoteKey = "$it", part = "/audio/$it", bytes = 4_000_000, pendingRating = if (it == 1) 1 else null) }
         store.update { LibraryState(tracks = tracks, playlists = listOf(Playlist("plex:large", "Big playlist", tracks.map { it.id }, true))) }
-        compose.onNodeWithText("Playlists", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Playlists").performScrollTo().performClick()
         val start = android.os.SystemClock.elapsedRealtime()
         compose.onNodeWithTag("open-playlist-plex:large").performClick()
         compose.waitUntil(5000) { compose.onAllNodesWithText("Large song 1").fetchSemanticsNodes().isNotEmpty() }
@@ -354,7 +356,7 @@ class MusicInstrumentedTest {
         assertFalse(context.getSharedPreferences("connection", Context.MODE_PRIVATE).all.toString().contains("test-pending-pin"))
         compose.runOnUiThread { compose.activity.viewModelStore.clear() }
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Plex", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Plex").performScrollTo().performClick()
         compose.onNodeWithText("Retry connection").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Reopen Plex sign-in").assertExists()
         compose.onNodeWithText("Sign in with Plex").assertDoesNotExist()
@@ -363,7 +365,7 @@ class MusicInstrumentedTest {
         store.credentials.saveLogin(authorized)
         compose.runOnUiThread { compose.activity.viewModelStore.clear() }
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Plex", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("tab-Plex").performScrollTo().performClick()
         compose.onNodeWithText("Plex sign-in saved").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Reopen Plex sign-in").assertDoesNotExist()
         assertEquals(authorized, Credentials(context).readLogin())
@@ -436,7 +438,66 @@ class MusicInstrumentedTest {
             screenshot("plex-imported")
         } finally { socket.close(); thread.join(1000) }
     }
+    @Test fun nowPlayingScreenShowsCarActionsAndEditsRatings() {
+        compose.onNodeWithText("Open Road").performClick()
+        compose.waitUntil(15_000) { PlaybackService.status.value.playing }
+        compose.onNodeWithContentDescription("Pause").performClick()
+        compose.onNodeWithTag("tab-Now playing").performScrollTo().performClick()
+        compose.onNodeWithText("Open Road").assertExists()
+        compose.onNodeWithText("Daylight").assertExists()
+        compose.onNodeWithText("Next artist").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Shuffle").assertIsDisplayed()
+        compose.onNodeWithText("Rate 0★").performScrollTo().performClick()
+        compose.onNodeWithText("4★").performClick()
+        assertEquals(4, store.state.value.tracks.first().localRating)
+        compose.onNodeWithText("Delete local copy").performScrollTo().performClick()
+        compose.onNodeWithText("Remove 1 local files?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Open Road").performScrollTo()
+        screenshot("now-playing-0.11.0")
+        compose.onNodeWithText("Playback queue").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Stop").performScrollTo().performClick()
+        compose.onNodeWithText("Nothing playing yet").assertExists()
+    }
+    @Test fun selectedPlaylistEditorPreservesOrderEditsAndSelectionAcrossRecreation() {
+        store.update { it.copy(playlists = listOf(Playlist("edit", "Road mix", listOf("local:1", "local:2", "local:1")))) }
+        compose.onNodeWithTag("tab-Playlists").performScrollTo().performClick()
+        compose.onNodeWithTag("edit-playlist-edit").performClick()
+        compose.onNodeWithTag("playlist-name").performTextReplacement("Edited road mix")
+        compose.onNodeWithText("Save name").performClick()
+        compose.onNodeWithTag("playlist-move-1").performClick()
+        compose.onNodeWithTag("playlist-position").performTextReplacement("1")
+        compose.onNodeWithText("Move song").performClick()
+        assertEquals(listOf("local:2", "local:1", "local:1"), store.state.value.playlists.single().tracks)
+        compose.onNodeWithTag("playlist-remove-2").performScrollTo().performClick()
+        assertEquals(listOf("local:2", "local:1"), store.state.value.playlists.single().tracks)
+        compose.onNodeWithText("Add songs").performClick()
+        compose.onNodeWithText("Night Drive").performScrollTo().performClick()
+        compose.onNodeWithText("Add 1 songs").performClick()
+        assertEquals(listOf("local:2", "local:1", "remote:3"), store.state.value.playlists.single().tracks)
+        assertFalse(store.state.value.playlists.single().pendingSync)
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("playlist-name").assertTextContains("Edited road mix")
+        screenshot("playlist-editor-0.11.0")
+    }
+    @Test fun plexPlaylistEditorQueuesOfflineEditsAndRequiresSeparateSyncReview() {
+        store.update { it.copy(offline = true, playlists = listOf(Playlist("plex:edit", "Plex road", listOf("remote:3"), true))) }
+        compose.onNodeWithTag("tab-Playlists").performScrollTo().performClick()
+        compose.onNodeWithTag("edit-playlist-plex:edit").performClick()
+        compose.onNodeWithTag("playlist-name").performTextReplacement("Plex road edited")
+        compose.onNodeWithText("Save name").performClick()
+        compose.onNodeWithText("Sync playlist").assertIsNotEnabled()
+        assertTrue(MusicStore(context).state.value.playlists.single().pendingSync)
+        assertEquals("Plex road", store.state.value.playlists.single().serverName)
+        compose.onNodeWithText("Offline").performClick()
+        compose.onNodeWithText("Sync playlist").performClick()
+        compose.onNodeWithText("Sync playlist to Plex?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        assertTrue(store.state.value.playlists.single().pendingSync)
+    }
     private fun screenshot(name: String) {
+        // Platform window fade-out can outlive Compose idleness after a dialog is dismissed.
+        Thread.sleep(350)
         compose.waitForIdle()
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name-${System.nanoTime()}.png")

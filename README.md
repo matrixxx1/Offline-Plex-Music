@@ -1,10 +1,15 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.10.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.11.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Features
+
+- **Now playing** is a full mobile screen with album art, song/artist/album information, seeking, previous/play/pause/next, shuffle, next artist, stop, rating, local deletion, Plex deletion flags, sync review, and a tappable playback queue. Tap the compact player's song information to open it.
+- **Selected playlist** is an editor reached with Edit in Playlists or Edit playlist in Library. Rename, add songs, move an individual occurrence to any position, remove entries, shuffle the order, or save a local copy. Plex changes survive refreshes and wait for **Sync playlist** and its review. Playlist removal never deletes song files. Plex smart playlists are read-only; copy them locally to edit.
+- Playlist sync uses entry IDs, preserves duplicates, verifies the resulting name/order, and checkpoints completed steps for retry. A server-side conflict stops sync and retains local edits. Reload from Plex explicitly discards the draft; save a local copy first if needed. Playlist sync is separate from ratings and media deletion.
+- Downloads validate the current HTTP response length instead of Plex's cached library size. Completed files record their actual byte count; truncated/empty responses and interrupted transfers are still rejected. For earlier **Downloaded size differs from Plex** failures, open **Downloads → Transfers → Resume / retry** after updating.
 
 - Visible Plex tab with browser sign-in, server discovery, and one-step connection/import. Manual URL/token setup is available under Advanced connection.
 - Android Auto media browsing, playback, voice search, four radio modes, and queued rating controls. See setup below for sideloaded APKs.

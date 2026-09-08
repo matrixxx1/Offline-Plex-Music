@@ -78,8 +78,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             val id = PlexApi(candidate).identity()
             val old = config
             check(old.serverId.isBlank() || old.serverId == id) { "This library belongs to another server. Use the original server to preserve queued ratings and downloads." }
-            check(old.token.isBlank() || old.token == candidate.token || state.value.tracks.none { it.pendingRating != null }) {
-                "Sync or discard queued ratings before changing the Plex account token."
+            check(old.token.isBlank() || old.token == candidate.token || (state.value.tracks.none { it.pendingRating != null || it.pendingDeletion } && state.value.playlists.none { it.pendingSync })) {
+                "Sync or discard queued changes before changing the Plex account token."
             }
             store.credentials.save(candidate.copy(serverId = id))
             connection.value = config
@@ -102,7 +102,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             }
             progress.value = "Loading Plex playlists"
             val playlistResult = runCatching { api.playlists() }
-            playlistResult.getOrNull()?.let { lists -> store.update { it.copy(playlists = it.playlists.filterNot { p -> p.plex } + lists) } }
+            playlistResult.getOrNull()?.let { lists -> store.update { it.copy(playlists = PlaylistEditing.merge(it.playlists, lists)) } }
             "Imported ${loaded.size} tracks. Open Library and tap a track to stream, or download Plex playlists for offline listening." + if (playlistResult.isFailure) " Playlist import failed; existing playlists were kept." else " Plex playlists updated."
     }
     fun refreshPlaylists() = task {
@@ -113,7 +113,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             val (lists, tracks) = api.playlistsWithTracks()
             store.update { s ->
                 val existing = s.tracks.map { it.id }.toSet()
-                s.copy(playlists = s.playlists.filterNot { it.plex } + lists,
+                s.copy(playlists = PlaylistEditing.merge(s.playlists, lists),
                     tracks = s.tracks + tracks.filter { it.id !in existing })
             }
             "${lists.size} Plex playlists refreshed. Select playlists to download."
@@ -227,6 +227,51 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }) }
     fun deletePlaylist(id: String) = store.update { it.copy(playlists = it.playlists.filterNot { p -> p.id == id && !p.plex }) }
+    fun editPlaylist(id: String, change: (Playlist) -> Playlist) {
+        if (busy.value) return
+        store.update { s -> s.copy(playlists = s.playlists.map { if (it.id == id) change(it) else it }) }
+    }
+    fun addPlaylistTracks(id: String, ids: List<String>) {
+        val valid = state.value.tracks.associateBy { it.id }
+        editPlaylist(id) { p -> PlaylistEditing.edit(p, tracks = p.tracks + ids.filter { key ->
+            valid[key]?.let { !p.plex || (it.remoteKey.isNotBlank() && it.id == "plex:${config.serverId}:${it.remoteKey}") } == true
+        }) }
+    }
+    fun copyPlaylist(id: String) {
+        if (busy.value) return
+        state.value.playlists.find { it.id == id }?.let { p ->
+            store.update { it.copy(playlists = it.playlists + Playlist(UUID.randomUUID().toString(), "${p.name} (copy)", p.tracks)) }
+            message.value = "Saved a local playlist copy."
+        }
+    }
+    fun reloadPlaylist(id: String) = task {
+        withContext(Dispatchers.IO) {
+            check(!state.value.offline) { "Turn off Offline before reloading a Plex playlist." }
+            val api = PlexApi(config); api.verifyServer()
+            val fresh = api.playlistSnapshot(id)
+            store.update { s ->
+                val existing = s.tracks.map { it.id }.toSet()
+                s.copy(playlists = s.playlists.map { if (it.id == id) fresh.playlist else it }, tracks = s.tracks + fresh.tracks.filter { it.id !in existing }.distinctBy { it.id })
+            }
+            "Playlist reloaded from Plex."
+        }
+    }
+    fun syncPlaylist(id: String) = task {
+        withContext(Dispatchers.IO) {
+            check(!state.value.offline) { "Turn off Offline before syncing a playlist." }
+            val draft = state.value.playlists.first { it.id == id }
+            try {
+                val verified = PlexApi(config).syncPlaylist(draft, state.value.tracks, { checkpoint ->
+                    store.update { s -> s.copy(playlists = s.playlists.map { if (it.id == id) PlaylistEditing.checkpoint(it, checkpoint, false) else it }) }
+                }, { progress.value = it })
+                store.update { s -> s.copy(playlists = s.playlists.map { if (it.id == id) PlaylistEditing.checkpoint(it, verified, true) else it }) }
+                "Playlist synced to Plex and verified. Ratings and music deletion flags remain separate."
+            } catch (e: Exception) {
+                store.update { s -> s.copy(playlists = s.playlists.map { if (it.id == id) it.copy(pendingSync = true, syncError = e.message ?: "Sync failed; edits are saved.") else it }) }
+                throw e
+            }
+        }
+    }
     fun flagDeletion(ids: Set<String>, flagged: Boolean) {
         store.update { s -> s.copy(tracks = s.tracks.map { if (it.id in ids && it.remoteKey.isNotBlank()) it.copy(pendingDeletion = flagged) else it }) }
         message.value = if (flagged) "Flagged for Plex deletion at next manual sync. Local downloads are kept." else "Plex deletion flag removed."

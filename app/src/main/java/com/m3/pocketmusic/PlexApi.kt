@@ -76,7 +76,7 @@ class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpUR
     fun playlists(): List<Playlist> = pages("/playlists?playlistType=audio").map { p ->
         val key = p.getString("ratingKey")
         Playlist("plex:$key", p.getString("title"), pages("/playlists/${encode(key)}/items")
-            .filter { it.optString("type") == "track" }.map { "plex:${config.serverId}:${it.getString("ratingKey")}" }, true)
+            .filter { it.optString("type") == "track" }.map { "plex:${config.serverId}:${it.getString("ratingKey")}" }, true, smart = p.optInt("smart") == 1 || p.optBoolean("smart"))
     }
     fun playlistsWithTracks(): Pair<List<Playlist>, List<Track>> {
         val tracks = linkedMapOf<String, Track>()
@@ -84,11 +84,105 @@ class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpUR
             val key = p.getString("ratingKey")
             val songs = pages("/playlists/${encode(key)}/items").filter { it.optString("type") == "track" }.map { parseTrack(it) }
             songs.forEach { tracks[it.id] = it }
-            Playlist("plex:$key", p.getString("title"), songs.map { it.id }, true)
+            Playlist("plex:$key", p.getString("title"), songs.map { it.id }, true, smart = p.optInt("smart") == 1 || p.optBoolean("smart"))
         }
         return lists to tracks.values.toList()
     }
     fun metadata(key: String): JSONObject = request("/library/metadata/${encode(key)}").getJSONArray("Metadata").getJSONObject(0)
+    data class PlaylistItem(val itemId: String, val trackId: String)
+    data class PlaylistSnapshot(val playlist: Playlist, val items: List<PlaylistItem>, val tracks: List<Track>)
+    fun playlistSnapshot(id: String): PlaylistSnapshot {
+        require(id.startsWith("plex:"))
+        val key = id.removePrefix("plex:")
+        val meta = request("/playlists/${encode(key)}").getJSONArray("Metadata").getJSONObject(0)
+        check(meta.getString("ratingKey") == key && meta.optString("playlistType") == "audio") { "This is not the original audio playlist." }
+        val rows = pages("/playlists/${encode(key)}/items")
+        check(rows.all { it.optString("type") == "track" }) { "Playlist contains unsupported media." }
+        val tracks = rows.map { parseTrack(it) }
+        val items = rows.map { PlaylistItem(it.get("playlistItemID").toString(), "plex:${config.serverId}:${it.getString("ratingKey")}") }
+        check(items.all { it.itemId.toLongOrNull() != null }) { "Plex returned invalid playlist entry IDs." }
+        check(items.map { it.itemId }.distinct().size == items.size) { "Plex returned duplicate playlist entry IDs." }
+        return PlaylistSnapshot(Playlist(id, meta.getString("title"), tracks.map { it.id }, true,
+            smart = meta.optInt("smart") == 1 || meta.optBoolean("smart")), items, tracks)
+    }
+    /** Update membership by entry ID; never deletes media files or clears a playlist to rebuild it. */
+    fun syncPlaylist(draft: Playlist, library: List<Track>, checkpoint: (Playlist) -> Unit, progress: (String) -> Unit): Playlist {
+        require(draft.plex && !draft.smart)
+        verifyServer()
+        var snapshot = playlistSnapshot(draft.id)
+        check(!snapshot.playlist.smart) { "Smart playlists are managed by Plex filters." }
+        if (snapshot.playlist.name == draft.name && snapshot.playlist.tracks == draft.tracks) return snapshot.playlist
+        check(snapshot.playlist.name == draft.serverName && snapshot.playlist.tracks == draft.serverTracks) {
+            "Plex playlist changed since your last refresh. Your edits are saved. Reload from Plex to discard them, or save a local copy first."
+        }
+        val byId = library.associateBy { it.id }
+        val desired = draft.tracks.map { id ->
+            val track = byId[id] ?: error("A playlist track is missing from the library. Refresh music before syncing.")
+            check(track.remoteKey.isNotBlank() && track.id == "plex:${config.serverId}:${track.remoteKey}") { "Plex playlists can only contain tracks from this Plex server." }
+            track
+        }
+        val root = "/playlists/${encode(draft.id.removePrefix("plex:"))}"
+        var name = snapshot.playlist.name
+        val items = snapshot.items.toMutableList()
+        fun current() = Playlist(draft.id, name, items.map { it.trackId }, true)
+        fun mutate(path: String, method: String, expected: Playlist, apply: () -> Unit) {
+            try { request(path, method) }
+            catch (e: Exception) {
+                // A timeout can happen after Plex applies a change. Only advance to an exact readback.
+                val actual = runCatching { playlistSnapshot(draft.id).playlist }.getOrNull()
+                if (actual?.name == expected.name && actual.tracks == expected.tracks) checkpoint(actual)
+                throw e
+            }
+            apply(); checkpoint(current())
+        }
+        // Add missing occurrences first, preserving existing playlist entry identities and duplicates.
+        val available = items.groupingBy { it.trackId }.eachCount().toMutableMap()
+        val missing = desired.filter { track ->
+            val count = available[track.id] ?: 0
+            if (count > 0) { available[track.id] = count - 1; false } else true
+        }
+        missing.chunked(100).forEachIndexed { index, batch ->
+            progress("Adding playlist songs: batch ${index + 1}/${(missing.size + 99) / 100}")
+            val expected = current().copy(tracks = items.map { it.trackId } + batch.map { it.id })
+            val uri = "server://${config.serverId}/com.plexapp.plugins.library/library/metadata/${batch.joinToString(",") { it.remoteKey }}"
+            try { request("$root/items?uri=${encode(uri)}", "PUT") }
+            catch (e: Exception) {
+                val actual = runCatching { playlistSnapshot(draft.id).playlist }.getOrNull()
+                if (actual?.name == expected.name && actual.tracks == expected.tracks) checkpoint(actual)
+                throw e
+            }
+            snapshot = playlistSnapshot(draft.id)
+            check(snapshot.playlist.name == expected.name && snapshot.playlist.tracks == expected.tracks) { "Plex did not confirm added songs. Your edits are still saved." }
+            items.clear(); items.addAll(snapshot.items); checkpoint(snapshot.playlist)
+        }
+        val needed = draft.tracks.groupingBy { it }.eachCount().toMutableMap()
+        val remove = items.filter { item ->
+            val count = needed[item.trackId] ?: 0
+            if (count > 0) { needed[item.trackId] = count - 1; false } else true
+        }
+        remove.forEachIndexed { index, item ->
+            progress("Removing playlist entries ${index + 1}/${remove.size}")
+            val expected = current().copy(tracks = items.filterNot { it.itemId == item.itemId }.map { it.trackId })
+            mutate("$root/items/${encode(item.itemId)}", "DELETE", expected) { items.remove(item) }
+        }
+        draft.tracks.forEachIndexed { index, id ->
+            if (items[index].trackId != id) {
+                progress("Ordering playlist ${index + 1}/${draft.tracks.size}")
+                val from = (index until items.size).first { items[it].trackId == id }
+                val item = items[from]
+                val expectedItems = items.toMutableList().apply { add(index, removeAt(from)) }
+                val after = if (index == 0) "" else "?after=${encode(items[index - 1].itemId)}"
+                mutate("$root/items/${encode(item.itemId)}/move$after", "PUT", current().copy(tracks = expectedItems.map { it.trackId })) {
+                    items.clear(); items.addAll(expectedItems)
+                }
+            }
+        }
+        if (name != draft.name) mutate("$root?title.value=${encode(draft.name)}&title.locked=1", "PUT", current().copy(name = draft.name)) { name = draft.name }
+        progress("Verifying Plex playlist")
+        val verified = playlistSnapshot(draft.id).playlist
+        check(verified.name == draft.name && verified.tracks == draft.tracks) { "Plex did not confirm the complete playlist. Your edits remain saved." }
+        return verified
+    }
     fun rate(track: Track, stars: Int) {
         require(track.remoteKey.isNotBlank() && stars in 0..5)
         request("/:/rate?key=${encode(track.remoteKey)}&identifier=com.plexapp.plugins.library&rating=${stars * 2}", "PUT")

@@ -64,21 +64,16 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 var copied = 0L
                 api.download(track) { input, expected ->
                     applicationContext.contentResolver.openOutputStream(target.uri, "wt")!!.use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
+                        copied = DownloadTransfer.copy(input, output, expected) {
                             if (isStopped) throw CancellationException()
                             guard.check()
-                            val n = input.read(buffer); if (n < 0) break
-                            output.write(buffer, 0, n); copied += n
                         }
                     }
-                    check(copied > 0 && (expected < 0 || expected == copied)) { "Incomplete download; retry required" }
-                    check(track.bytes == 0L || copied == track.bytes) { "Downloaded size differs from Plex; retry required" }
                 }
                 synchronized(store) {
                     if (isStopped || store.state.value.downloads.none { it.id == job.id }) throw CancellationException()
                     check(target.renameTo("$prefix$safeName.$ext")) { "Could not finalize download" }
-                    store.patch(track.id) { it.copy(localUri = target.uri.toString()) }
+                    store.patch(track.id) { it.copy(localUri = target.uri.toString(), bytes = copied) }
                     store.update { it.copy(downloads = it.downloads.filterNot { j -> j.id == job.id }) }
                 }
                 doc = null

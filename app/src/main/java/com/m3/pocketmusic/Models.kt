@@ -20,7 +20,9 @@ data class Track(
     val albumGroup get() = albumId.ifBlank { "${artist.lowercase()}::${album.lowercase()}" }
     val artistGroup get() = artistId.ifBlank { artist.lowercase() }
 }
-data class Playlist(val id: String, val name: String, val tracks: List<String>, val plex: Boolean = false)
+data class Playlist(val id: String, val name: String, val tracks: List<String>, val plex: Boolean = false,
+    val smart: Boolean = false, val pendingSync: Boolean = false,
+    val serverName: String = name, val serverTracks: List<String> = tracks, val syncError: String = "")
 data class DownloadJob(val id: String, val state: String = "Queued", val error: String = "")
 data class LibraryState(
     val tracks: List<Track> = emptyList(), val playlists: List<Playlist> = emptyList(),

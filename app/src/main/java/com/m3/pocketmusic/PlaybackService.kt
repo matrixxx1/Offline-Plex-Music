@@ -160,8 +160,8 @@ class PlaybackService : MediaLibraryService() {
     }
     private fun playlistSequence(): List<Track> = if (sequence.isNotEmpty()) sequence else
         (0 until player.mediaItemCount).mapNotNull { i -> musicStore.state.value.tracks.find { it.id == player.getMediaItemAt(i).mediaId } }
-    private fun shufflePlaylist() { playTracks(playlistSequence().shuffled()) }
-    private fun nextArtist() {
+    fun shufflePlaylist() { playTracks(playlistSequence().shuffled()) }
+    fun nextArtist() {
         val tracks = playlistSequence()
         val current = tracks.indexOfFirst { it.id == player.currentMediaItem?.mediaId }
         val artist = tracks.getOrNull(current)?.artistGroup ?: return
