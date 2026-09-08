@@ -45,6 +45,41 @@ class MusicInstrumentedTest {
         )) }
         compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
     }
+    @Test fun downloadControlsStayResponsiveWhileLargeLibraryWriterIsBlocked() {
+        val tracks = (1..31_382).map { Track("load:$it", "Song $it", "Artist ${it % 25}", "Album", remoteKey = "$it", part = "/audio/$it") }
+        store.update { LibraryState(tracks = tracks, downloads = tracks.map { DownloadJob(it.id) }) }
+        compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
+        val vm = androidx.lifecycle.ViewModelProvider(compose.activity)[MusicViewModel::class.java]
+        val locked = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val responsive = java.util.concurrent.CountDownLatch(1)
+        val writer = Thread {
+            synchronized(store) {
+                locked.countDown()
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+        writer.start()
+        assertTrue(locked.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                vm.pauseDownloads()
+                vm.rate(setOf("load:1"), 4)
+                vm.settings(two = true)
+                vm.settings(mode = PlayMode.RANDOM_ALBUM)
+                // A later UI message must run even while the writer remains blocked.
+                android.os.Handler(android.os.Looper.getMainLooper()).post { responsive.countDown() }
+            }
+            assertTrue("Download controls blocked the main thread waiting for storage", responsive.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        } finally { release.countDown(); writer.join(5000) }
+        compose.waitUntil(15_000) { store.state.value.mode == PlayMode.RANDOM_ALBUM }
+        val saved = MusicStore(context).state.value
+        assertTrue(saved.downloadsPaused)
+        assertEquals(31_382, saved.downloads.size)
+        assertEquals(4, saved.tracks.first().pendingRating)
+        assertTrue(saved.twoTrack)
+        assertEquals(PlayMode.RANDOM_ALBUM, saved.mode)
+    }
     @Test fun equivalentLibrarySnapshotDoesNotLeaveLoadingScreenStuck() {
         store.update { it.copy(tracks = it.tracks.map { t -> t.copy() }, wifiOnlyDownloads = !it.wifiOnlyDownloads) }
         compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
@@ -80,12 +115,14 @@ class MusicInstrumentedTest {
     @Test fun localRatingAndPlaylistAreUsableWithoutPlex() {
         compose.onAllNodesWithText("☆", useUnmergedTree = true)[0].performClick()
         compose.onNodeWithText("5★", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { store.state.value.tracks.first().localRating == 5 }
         assertEquals(5, store.state.value.tracks.first().localRating)
         assertNull(store.state.value.tracks.first().pendingRating)
         compose.onNodeWithTag("tab-Playlists").performScrollTo().performClick()
         compose.onNodeWithText("New playlist").performClick()
         compose.onNodeWithText("New playlist name").performTextInput("Road trip")
         compose.onNodeWithText("Create", useUnmergedTree = true).performClick()
+        compose.waitUntil(5000) { store.state.value.playlists.any { it.name == "Road trip" } }
         compose.onNodeWithText("Road trip").assertExists()
         assertEquals("Road trip", store.state.value.playlists.single().name)
     }
@@ -261,11 +298,13 @@ class MusicInstrumentedTest {
         compose.onNodeWithTag("tab-Downloads").performScrollTo().performClick()
         compose.onNodeWithText("Transfers (0)").performClick()
         compose.onNodeWithTag("download-wifi-only").assertIsOn().performClick()
+        compose.waitUntil(5000) { !store.state.value.wifiOnlyDownloads }
         assertFalse(MusicStore(context).state.value.wifiOnlyDownloads)
         store.update { it.copy(downloads = listOf(DownloadJob("remote:3")), downloadsPaused = true) }
         compose.onNodeWithTag("download-wifi-only").performClick()
         assertTrue(store.state.value.downloadsPaused)
         assertEquals(1, store.state.value.downloads.size)
+        compose.waitUntil(5000) { store.state.value.wifiOnlyDownloads }
         assertTrue(MusicStore(context).state.value.wifiOnlyDownloads)
         screenshot("wifi-download-queue")
         compose.runOnUiThread { compose.activity.viewModelStore.clear() }
@@ -449,6 +488,7 @@ class MusicInstrumentedTest {
         compose.onNodeWithText("Shuffle").assertIsDisplayed()
         compose.onNodeWithText("Rate 0★").performScrollTo().performClick()
         compose.onNodeWithText("4★").performClick()
+        compose.waitUntil(5000) { store.state.value.tracks.first().localRating == 4 }
         assertEquals(4, store.state.value.tracks.first().localRating)
         compose.onNodeWithText("Delete local copy").performScrollTo().performClick()
         compose.onNodeWithText("Remove 1 local files?").assertExists()
@@ -468,12 +508,15 @@ class MusicInstrumentedTest {
         compose.onNodeWithTag("playlist-move-1").performClick()
         compose.onNodeWithTag("playlist-position").performTextReplacement("1")
         compose.onNodeWithText("Move song").performClick()
+        compose.waitUntil(5000) { store.state.value.playlists.single().tracks == listOf("local:2", "local:1", "local:1") }
         assertEquals(listOf("local:2", "local:1", "local:1"), store.state.value.playlists.single().tracks)
         compose.onNodeWithTag("playlist-remove-2").performScrollTo().performClick()
+        compose.waitUntil(5000) { store.state.value.playlists.single().tracks == listOf("local:2", "local:1") }
         assertEquals(listOf("local:2", "local:1"), store.state.value.playlists.single().tracks)
         compose.onNodeWithText("Add songs").performClick()
         compose.onNodeWithText("Night Drive").performScrollTo().performClick()
         compose.onNodeWithText("Add 1 songs").performClick()
+        compose.waitUntil(5000) { store.state.value.playlists.single().tracks == listOf("local:2", "local:1", "remote:3") }
         assertEquals(listOf("local:2", "local:1", "remote:3"), store.state.value.playlists.single().tracks)
         assertFalse(store.state.value.playlists.single().pendingSync)
         compose.activityRule.scenario.recreate()
@@ -487,6 +530,7 @@ class MusicInstrumentedTest {
         compose.onNodeWithTag("playlist-name").performTextReplacement("Plex road edited")
         compose.onNodeWithText("Save name").performClick()
         compose.onNodeWithText("Sync playlist").assertIsNotEnabled()
+        compose.waitUntil(5000) { store.state.value.playlists.single().pendingSync }
         assertTrue(MusicStore(context).state.value.playlists.single().pendingSync)
         assertEquals("Plex road", store.state.value.playlists.single().serverName)
         compose.onNodeWithText("Offline").performClick()

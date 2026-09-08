@@ -26,6 +26,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.CommandButton
+import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.collect.ImmutableList
@@ -119,10 +120,16 @@ class PlaybackService : MediaLibraryService() {
                 }
                 previousOffline = state.offline
                 if (subscriptions.isNotEmpty() && (previousCatalog?.tracks != state.tracks || previousCatalog?.playlists != state.playlists || previousCatalog?.offline != state.offline)) {
-                    val catalog = CarCatalog(state)
-                    subscriptions.values.flatMap { it }.distinct().forEach { parent -> session?.notifyChildrenChanged(parent, catalog.children(parent).size, null) }
+                    val parents = subscriptions.values.flatMap { it }.distinct()
+                    val counts = withContext(Dispatchers.Default) {
+                        val catalog = CarCatalog(state)
+                        parents.associateWith { catalog.children(it).size }
+                    }
+                    counts.forEach { (parent, count) -> session?.notifyChildrenChanged(parent, count, null) }
                 }
+                val tracksChanged = previousCatalog?.tracks !== state.tracks
                 previousCatalog = state
+                if (!tracksChanged) return@collect
                 updateCarButtons()
                 val index = player.currentMediaItemIndex
                 val current = player.currentMediaItem
@@ -132,6 +139,19 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
         }
+    }
+    private fun saveCarChange(change: () -> Unit): ListenableFuture<SessionResult> {
+        val result = SettableFuture.create<SessionResult>()
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { change() }
+                result.set(SessionResult(SessionResult.RESULT_SUCCESS))
+            } catch (e: Exception) {
+                status.value = status.value.copy(error = "Could not save changes: ${e.message}")
+                result.set(SessionResult(SessionError.ERROR_IO))
+            }
+        }
+        return result
     }
     fun reloadConnection() {
         stopPlayback()
@@ -265,8 +285,8 @@ class PlaybackService : MediaLibraryService() {
         var index = queue.start
         if (queue.mode != null) {
             scopeIds = null; planner.reset(); radio = true
-            musicStore.update { it.copy(mode = queue.mode) }
-            val s = musicStore.state.value
+            saveCarChange { musicStore.update { it.copy(mode = queue.mode) } }
+            val s = musicStore.state.value.copy(mode = queue.mode)
             val playable = queue.tracks.filter { it.downloaded || config.url.isNotBlank() }
             resolved = (planner.next(playable, s.mode, s.twoTrack) + planner.next(playable, s.mode, s.twoTrack)).mapNotNull { media(it) }
             if (resolved.isEmpty()) radio = false
@@ -337,8 +357,7 @@ class PlaybackService : MediaLibraryService() {
             val track = CarCatalog(musicStore.state.value).item(mediaId)?.track
             val stars = (rating as? StarRating)?.takeIf { it.isRated && it.maxStars == 5 }?.starRating
             if (track == null || stars == null || stars % 1f != 0f || stars !in 1f..5f) return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
-            musicStore.rate(setOf(track.id), stars.toInt())
-            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            return saveCarChange { musicStore.rate(setOf(track.id), stars.toInt()) }
         }
         override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
             if (customCommand.customAction == STOP) { stopPlayback(); return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS)) }
@@ -351,10 +370,10 @@ class PlaybackService : MediaLibraryService() {
             when (customCommand.customAction) {
                 SHUFFLE -> shufflePlaylist()
                 NEXT_ARTIST -> nextArtist()
-                RATE_CYCLE -> musicStore.rate(setOf(track.id), (track.rating + 1) % 6)
+                RATE_CYCLE -> return saveCarChange { musicStore.patch(track.id) { RatingRules.rate(it, (it.rating + 1) % 6) } }
                 FLAG_DELETE -> {
                     if (track.remoteKey.isBlank()) return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
-                    musicStore.patch(track.id) { it.copy(pendingDeletion = !it.pendingDeletion) }
+                    return saveCarChange { musicStore.patch(track.id) { it.copy(pendingDeletion = !it.pendingDeletion) } }
                 }
                 DELETE_LOCAL -> {
                     if (!track.downloaded || musicStore.state.value.downloads.any { it.id == track.id }) return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1
+
+- Move phone control saves and Android Auto rating/deletion-flag saves off the main thread so a download writing the library cannot block touch input. Preserve durable saves, edit order, and error reporting.
+- Finalize download documents outside the library lock and save completion/file metadata in one atomic update.
+- Avoid rebuilding download filters on the Transfers screen and rebuilding car browse counts on the main thread.
+- Add a 31,382-song regression that holds the library writer lock while checking UI responsiveness and persisted pause, rating, and settings changes.
+
 ## 0.11.0
 
 - Add a full Now playing phone screen with the Android Auto playback/song actions, large cached artwork, timeline, track information, and tappable queue.

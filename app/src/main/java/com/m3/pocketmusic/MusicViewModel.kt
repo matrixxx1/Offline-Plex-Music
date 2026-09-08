@@ -10,6 +10,8 @@ import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,12 +34,24 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         if (busy.value) return
         busy.value = true; message.value = ""
         operation = viewModelScope.launch {
-            try { message.value = block() }
+            try { editLock.withLock { }; message.value = block() }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { message.value = e.message ?: "Operation failed. Your queued ratings are saved." }
             finally { busy.value = false; progress.value = "" }
         }
     }
+    private val editLock = Mutex()
+    // Preserve tap order without ever waiting for the download writer on the UI thread.
+    private fun edit(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            editLock.withLock {
+                try { block() }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { message.value = "Could not save changes: ${e.message}" }
+            }
+        }
+    }
+    private suspend fun save(change: (LibraryState) -> LibraryState) = withContext(Dispatchers.IO) { store.update(change) }
     fun signIn(openBrowser: (String) -> Unit) = task {
         check(!state.value.offline) { "Turn off Offline only before signing in." }
         signingIn.value = true; servers.value = emptyList()
@@ -158,12 +172,12 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         check(state.value.downloads.none { it.state != "Failed" }) { "Finish or cancel downloads before scanning the folder." }
         val count = LocalMusic.scan(getApplication()) { progress.value = it }; "Found $count local tracks."
     }
-    fun setFolder(uri: String) { store.update { it.copy(folder = uri) }; scan() }
-    fun rate(ids: Set<String>, stars: Int) { store.rate(ids, stars); message.value = "Rated ${ids.size} tracks. Plex changes wait for Sync." }
-    fun discardRatings() { store.update { it.copy(tracks = it.tracks.map { t -> t.copy(pendingRating = null) }) } }
-    fun settings(offline: Boolean = state.value.offline, mode: PlayMode = state.value.mode, two: Boolean = state.value.twoTrack) {
-        store.update { it.copy(offline = offline, mode = mode, twoTrack = two) }
-        if (offline) {
+    fun setFolder(uri: String) = edit { save { it.copy(folder = uri) }; scan() }
+    fun rate(ids: Set<String>, stars: Int) = edit { withContext(Dispatchers.IO) { store.rate(ids, stars) }; message.value = "Rated ${ids.size} tracks. Plex changes wait for Sync." }
+    fun discardRatings() = edit { save { it.copy(tracks = it.tracks.map { t -> t.copy(pendingRating = null) }) } }
+    fun settings(offline: Boolean? = null, mode: PlayMode? = null, two: Boolean? = null) = edit {
+        save { it.copy(offline = offline ?: it.offline, mode = mode ?: it.mode, twoTrack = two ?: it.twoTrack) }
+        if (offline == true) {
             cancelSignIn()
             WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
         }
@@ -182,26 +196,26 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             "${tracks.size} tracks queued for download." + if (state.value.wifiOnlyDownloads) " Downloads start automatically on Wi-Fi." else " Wi-Fi or mobile data may be used."
         }
     }
-    fun retryDownloads() {
-        if (busy.value) return
-        if (state.value.offline) { message.value = "Turn off Offline only to resume downloads."; return }
-        store.update { s -> s.copy(downloadsPaused = false, downloads = s.downloads.map { it.copy(state = "Queued", error = "") }) }
+    fun retryDownloads() = edit {
+        if (busy.value) return@edit
+        if (state.value.offline) { message.value = "Turn off Offline only to resume downloads."; return@edit }
+        save { s -> s.copy(downloadsPaused = false, downloads = s.downloads.map { it.copy(state = "Queued", error = "") }) }
         enqueueDownloads()
     }
-    fun pauseDownloads() {
-        store.update { it.copy(downloadsPaused = true) }
+    fun pauseDownloads() = edit {
+        save { it.copy(downloadsPaused = true) }
         WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads"); message.value = "Downloads paused. Tap Resume to continue."
     }
-    fun setDownloadWifiOnly(enabled: Boolean) {
-        if (enabled == state.value.wifiOnlyDownloads) return
-        store.update { it.copy(wifiOnlyDownloads = enabled) }
+    fun setDownloadWifiOnly(enabled: Boolean) = edit {
+        if (enabled == state.value.wifiOnlyDownloads) return@edit
+        save { it.copy(wifiOnlyDownloads = enabled) }
         WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
         if (!state.value.offline && !state.value.downloadsPaused && state.value.downloads.isNotEmpty()) enqueueDownloads()
         message.value = if (enabled) "Downloads will wait for Wi-Fi." else "Downloads may use Wi-Fi or mobile data."
     }
-    fun cancelDownloads() {
+    fun cancelDownloads() = edit {
         WorkManager.getInstance(getApplication()).cancelUniqueWork("music-downloads")
-        store.update { it.copy(downloads = emptyList(), downloadsPaused = false) }
+        save { it.copy(downloads = emptyList(), downloadsPaused = false) }
         message.value = "Download queue canceled. Completed files are kept."
     }
     private fun enqueueDownloads() {
@@ -209,27 +223,30 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             .setBackoffCriteria(BackoffPolicy.LINEAR, 30, java.util.concurrent.TimeUnit.SECONDS).build()
         WorkManager.getInstance(getApplication()).enqueueUniqueWork("music-downloads", ExistingWorkPolicy.APPEND_OR_REPLACE, work)
     }
-    fun playlist(name: String, ids: List<String>, target: String? = null) {
+    fun playlist(name: String, ids: List<String>, target: String? = null) = edit {
         require(name.isNotBlank())
-        store.update { s ->
+        save { s ->
             val old = s.playlists.find { it.id == target && !it.plex }
             if (old == null) s.copy(playlists = s.playlists + Playlist(UUID.randomUUID().toString(), name.trim(), ids.distinct()))
             else s.copy(playlists = s.playlists.map { if (it.id == old.id) it.copy(tracks = (it.tracks + ids).distinct()) else it })
         }
     }
-    fun removeFromPlaylist(playlistId: String, ids: Set<String>) = store.update { s -> s.copy(playlists = s.playlists.map {
+    fun removeFromPlaylist(playlistId: String, ids: Set<String>) = edit { save { s -> s.copy(playlists = s.playlists.map {
         if (it.id == playlistId && !it.plex) it.copy(tracks = it.tracks.filterNot { id -> id in ids }) else it
-    }) }
-    fun movePlaylistTrack(playlistId: String, trackId: String, delta: Int) = store.update { s -> s.copy(playlists = s.playlists.map { p ->
+    }) } }
+
+    fun movePlaylistTrack(playlistId: String, trackId: String, delta: Int) = edit { save { s -> s.copy(playlists = s.playlists.map { p ->
         if (p.id != playlistId || p.plex) p else {
             val items = p.tracks.toMutableList(); val from = items.indexOf(trackId); val to = (from + delta).coerceIn(0, (items.size - 1).coerceAtLeast(0))
             if (from >= 0) { items.removeAt(from); items.add(to, trackId) }; p.copy(tracks = items)
         }
-    }) }
-    fun deletePlaylist(id: String) = store.update { it.copy(playlists = it.playlists.filterNot { p -> p.id == id && !p.plex }) }
+    }) } }
+
+    fun deletePlaylist(id: String) = edit { save { it.copy(playlists = it.playlists.filterNot { p -> p.id == id && !p.plex }) } }
+
     fun editPlaylist(id: String, change: (Playlist) -> Playlist) {
         if (busy.value) return
-        store.update { s -> s.copy(playlists = s.playlists.map { if (it.id == id) change(it) else it }) }
+        edit { save { s -> s.copy(playlists = s.playlists.map { if (it.id == id) change(it) else it }) } }
     }
     fun addPlaylistTracks(id: String, ids: List<String>) {
         val valid = state.value.tracks.associateBy { it.id }
@@ -239,9 +256,11 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun copyPlaylist(id: String) {
         if (busy.value) return
-        state.value.playlists.find { it.id == id }?.let { p ->
-            store.update { it.copy(playlists = it.playlists + Playlist(UUID.randomUUID().toString(), "${p.name} (copy)", p.tracks)) }
-            message.value = "Saved a local playlist copy."
+        edit {
+            state.value.playlists.find { it.id == id }?.let { p ->
+                save { it.copy(playlists = it.playlists + Playlist(UUID.randomUUID().toString(), "${p.name} (copy)", p.tracks)) }
+                message.value = "Saved a local playlist copy."
+            }
         }
     }
     fun reloadPlaylist(id: String) = task {
@@ -272,15 +291,15 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-    fun flagDeletion(ids: Set<String>, flagged: Boolean) {
-        store.update { s -> s.copy(tracks = s.tracks.map { if (it.id in ids && it.remoteKey.isNotBlank()) it.copy(pendingDeletion = flagged) else it }) }
+    fun flagDeletion(ids: Set<String>, flagged: Boolean) = edit {
+        save { s -> s.copy(tracks = s.tracks.map { if (it.id in ids && it.remoteKey.isNotBlank()) it.copy(pendingDeletion = flagged) else it }) }
         message.value = if (flagged) "Flagged for Plex deletion at next manual sync. Local downloads are kept." else "Plex deletion flag removed."
     }
     fun removeDownloads(ids: Set<String>) = delete(state.value.tracks.filter { it.id in ids && it.downloaded }.map { it.id }.toSet(), local = true, server = false)
     fun delete(ids: Set<String>, local: Boolean, server: Boolean) = task {
         check(local || server)
         check(state.value.downloads.none { it.id in ids }) { "Finish downloads before deleting these tracks." }
-        if (server) flagDeletion(ids, true)
+        if (server) withContext(Dispatchers.IO) { store.update { s -> s.copy(tracks = s.tracks.map { if (it.id in ids && it.remoteKey.isNotBlank()) it.copy(pendingDeletion = true) else it }) } }
         PlaybackService.instance?.removeTracks(ids)
         try { withContext(Dispatchers.IO) {
             val tracks = state.value.tracks.filter { it.id in ids }

@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.plugin.compose
 android {
     namespace = "com.m3.pocketmusic"
     compileSdk = 37
-    defaultConfig { applicationId = "com.m3.pocketmusic"; minSdk = 26; targetSdk = 36; versionCode = 11; versionName = "0.11.0"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "com.m3.pocketmusic"; minSdk = 26; targetSdk = 36; versionCode = 12; versionName = "0.11.1"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildFeatures { compose = true }
 }

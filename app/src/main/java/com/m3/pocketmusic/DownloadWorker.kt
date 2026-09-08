@@ -70,11 +70,14 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         }
                     }
                 }
-                synchronized(store) {
-                    if (isStopped || store.state.value.downloads.none { it.id == job.id }) throw CancellationException()
-                    check(target.renameTo("$prefix$safeName.$ext")) { "Could not finalize download" }
-                    store.patch(track.id) { it.copy(localUri = target.uri.toString(), bytes = copied) }
-                    store.update { it.copy(downloads = it.downloads.filterNot { j -> j.id == job.id }) }
+                // A document provider can be slow. Never hold the library lock during its IPC.
+                check(target.renameTo("$prefix$safeName.$ext")) { "Could not finalize download" }
+                store.update { state ->
+                    if (isStopped || state.downloads.none { it.id == job.id }) throw CancellationException()
+                    state.copy(
+                        tracks = state.tracks.map { if (it.id == track.id) it.copy(localUri = target.uri.toString(), bytes = copied) else it },
+                        downloads = state.downloads.filterNot { it.id == job.id }
+                    )
                 }
                 doc = null
             } catch (cancelled: CancellationException) {

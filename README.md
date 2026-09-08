@@ -1,6 +1,6 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.11.0 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.11.1 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 

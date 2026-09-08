@@ -26,13 +26,8 @@ import androidx.compose.ui.unit.sp
     var includeOwn by rememberSaveable { mutableStateOf(true) }
     var search by rememberSaveable { mutableStateOf("") }
     var selected by remember { mutableStateOf(emptySet<String>()) }
-    val offline = state.tracks.filter { it.downloaded }
-    val optionSource = offline.filter { includeOwn || it.remoteKey.isNotBlank() }
-    val options = DownloadFilters.options(optionSource, filter)
-    val filtered = DownloadFilters.matching(offline, filter, key, below, includeUnrated, includeOwn).filter {
-        search.isBlank() || "${it.title} ${it.artist} ${it.album}".contains(search, ignoreCase = true)
-    }
-    val selection = selected.intersect(filtered.map { it.id }.toSet())
+    val offline = remember(state.tracks) { state.tracks.filter { it.downloaded } }
+    val trackNames = remember(state.tracks) { state.tracks.associate { it.id to it.title } }
     Column(Modifier.fillMaxSize()) {
         Button(onClick = playlistDownload, modifier = Modifier.fillMaxWidth()) { Text("Download Plex playlists") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -56,12 +51,21 @@ import androidx.compose.ui.unit.sp
             }
             LazyColumn(Modifier.weight(1f)) { items(state.downloads, key = { it.id }) { job ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                    Text(state.tracks.find { it.id == job.id }?.title ?: "Removed track")
+                    Text(trackNames[job.id] ?: "Removed track")
                     Text(job.state, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                     if (job.error.isNotBlank()) Text(job.error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
             } }
         } else {
+            val options = remember(offline, includeOwn, filter) {
+                DownloadFilters.options(offline.filter { includeOwn || it.remoteKey.isNotBlank() }, filter)
+            }
+            val filtered = remember(offline, filter, key, below, includeUnrated, includeOwn, search) {
+                DownloadFilters.matching(offline, filter, key, below, includeUnrated, includeOwn).filter {
+                    search.isBlank() || "${it.title} ${it.artist} ${it.album}".contains(search, ignoreCase = true)
+                }
+            }
+            val selection = remember(selected, filtered) { selected.intersect(filtered.map { it.id }.toSet()) }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 DownloadFilter.entries.forEach { kind -> FilterChip(filter == kind,
                     { filter = kind; key = null; selected = emptySet() }, label = { Text(kind.label) }) }
