@@ -111,6 +111,36 @@ class CarIntegrationTest {
         main { controller.transportControls.stop() }
         until { !PlaybackService.status.value.playing }
     }
+    @Test fun legacyCarAdvertisesVisibleActionsAndQueuesDeletionWithoutNetwork() {
+        connect()
+        assertEquals("Playlists", children(CarCatalog.ROOT)[1].description.title.toString())
+        store.update { s -> s.copy(tracks = s.tracks.map { if (it.id == "car-b") it.copy(artist = "Other artist") else it }) }
+        val songs = children(children("playlists").single().mediaId!!)
+        main { controller.transportControls.playFromMediaId(songs.first().mediaId, Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-b" }
+        fun actions() = controller.playbackState?.customActions.orEmpty()
+        until { actions().map { it.action }.containsAll(listOf(PlaybackService.SHUFFLE, PlaybackService.RATE_CYCLE, PlaybackService.NEXT_ARTIST, PlaybackService.MORE_ACTIONS)) }
+        assertTrue(actions().all { it.icon != 0 && it.name.isNotBlank() })
+        main { controller.transportControls.sendCustomAction(PlaybackService.NEXT_ARTIST, Bundle.EMPTY) }
+        until { PlaybackService.status.value.trackId == "car-a" }
+        main { controller.transportControls.sendCustomAction(PlaybackService.RATE_CYCLE, Bundle.EMPTY) }
+        until { store.state.value.tracks.first().pendingRating == 1 }
+        main { controller.transportControls.sendCustomAction(PlaybackService.MORE_ACTIONS, Bundle.EMPTY) }
+        until { actions().any { it.action == PlaybackService.FLAG_DELETE } && actions().any { it.action == PlaybackService.DELETE_LOCAL } }
+        main { controller.transportControls.sendCustomAction(PlaybackService.FLAG_DELETE, Bundle.EMPTY) }
+        until { store.state.value.tracks.first().pendingDeletion }
+        assertTrue(MusicStore(context).state.value.tracks.first().pendingDeletion)
+        assertEquals("1", store.state.value.tracks.first().remoteKey)
+        assertTrue(store.state.value.tracks.first().downloaded)
+        until { actions().any { it.name.toString() == "Unflag Plex deletion" } }
+        main { controller.transportControls.sendCustomAction(PlaybackService.FLAG_DELETE, Bundle.EMPTY) }
+        until { !store.state.value.tracks.first().pendingDeletion }
+        main { controller.transportControls.sendCustomAction(PlaybackService.MORE_ACTIONS, Bundle.EMPTY) }
+        until { actions().any { it.action == PlaybackService.SHUFFLE } }
+        main { controller.transportControls.sendCustomAction(PlaybackService.SHUFFLE, Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing }
+        assertEquals(setOf("car-a", "car-b"), controller.queue!!.map { it.description.mediaId }.toSet())
+    }
     @Test fun legacyVoiceSearchOfflineBrowsingAndRadioRespectPhoneSettings() {
         connect()
         assertEquals(3, children("tracks").size)

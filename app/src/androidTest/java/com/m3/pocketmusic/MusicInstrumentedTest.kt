@@ -93,7 +93,7 @@ class MusicInstrumentedTest {
         store.rate(setOf("remote:3"), 1)
         compose.onNodeWithText("Clean 1★").performClick()
         compose.onNodeWithText("Review music deletion").assertExists()
-        compose.onNodeWithText("Delete selected files").assertIsNotEnabled()
+        compose.onNodeWithText("Apply selected actions").assertIsNotEnabled()
         compose.onNodeWithText("Cancel", useUnmergedTree = true).performClick()
         assertEquals(3, store.state.value.tracks.size)
         screenshot("library")
@@ -439,7 +439,7 @@ class MusicInstrumentedTest {
     private fun screenshot(name: String) {
         compose.waitForIdle()
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name-${System.nanoTime()}.png")
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PocketMusic-Test")
         })!!

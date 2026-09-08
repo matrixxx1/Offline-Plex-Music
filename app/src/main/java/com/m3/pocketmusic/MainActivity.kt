@@ -130,10 +130,11 @@ class MainActivity : ComponentActivity() {
     fun keys(t: Track) = groupKeys(t, group)
     val activeSelection = remember(selected, index) { selected.intersect(index?.byId?.keys.orEmpty()) }
     val queued = remember(state.tracks) { state.tracks.filter { it.pendingRating != null } }
+    val deletions = remember(state.tracks) { state.tracks.filter { it.pendingDeletion } }
     val now = index?.byId?.get(playing.trackId)
 
     Scaffold(bottomBar = {
-        if (now != null) NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true })
+        if (now != null) NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true }, { removeDownloadIds = setOf(now.id) }, { vm.flagDeletion(setOf(now.id), !now.pendingDeletion) }, !busy)
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -144,7 +145,7 @@ class MainActivity : ComponentActivity() {
                 AssistChip(onClick = { vm.settings(offline = !state.offline) }, label = { Text(if (state.offline) "Offline" else "Online") })
             }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Library", "Plex", "Playlists", "Downloads", "Settings").forEach { name -> FilterChip(tab == name, { tab = name }, label = { Text(name) }) }
+                listOf("Library", "Playlists", "Plex", "Downloads", "Settings").forEach { name -> FilterChip(tab == name, { tab = name }, label = { Text(name) }) }
             }
             if (busy || state.downloads.any { it.state == "Downloading" }) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -183,10 +184,18 @@ class MainActivity : ComponentActivity() {
                         Text("2 Track limit", fontSize = 12.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = { play { PlaybackService.instance?.playTracks(visible) } }, enabled = visible.isNotEmpty()) { Text("Play") }
+                        TextButton(onClick = { play { PlaybackService.instance?.playTracks(visible.shuffled()) } }, enabled = visible.isNotEmpty()) { Text("Shuffle") }
+                        TextButton(onClick = { showSync = true }, enabled = (queued.isNotEmpty() || deletions.isNotEmpty()) && !busy) { Text("Sync (${queued.size + deletions.size})") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = { play { PlaybackService.instance?.startRadio(visible.map { it.id }.toSet()) } }, enabled = visible.isNotEmpty()) {
                             Icon(Icons.Default.PlayArrow, null); Text("Start radio")
                         }
-                        TextButton(onClick = { showSync = true }, enabled = queued.isNotEmpty() && !busy) { Text("Sync ratings (${queued.size})") }
+                        DropChoice("Jump to artist", visible.map { it.artist }.distinct().sorted()) { artist ->
+                            val at = visible.indexOfFirst { it.artist == artist }
+                            if (at >= 0) play { PlaybackService.instance?.playTracks(visible, at) }
+                        }
                     }
                     if (groupValue != null) TextButton(onClick = { groupValue = null; selected = emptySet() }) { Text("← $group / $groupValue") }
                     if (activeSelection.isNotEmpty()) {
@@ -218,7 +227,7 @@ class MainActivity : ComponentActivity() {
                             TrackRow(track, track.id in activeSelection, track.id == now?.id, { checked -> selected = if (checked) selected + track.id else selected - track.id },
                                 { play { PlaybackService.instance?.playTracks(visible, trackIndex) } }, { ratingIds = setOf(track.id) },
                                 { removeDownloadIds = setOf(track.id) },
-                                !busy && track.downloaded)
+                                !busy && track.downloaded, { vm.flagDeletion(setOf(track.id), !track.pendingDeletion) }, !busy)
                             if (playlist != null && !playlist.plex && track.id in activeSelection) Row {
                                 TextButton(onClick = { vm.movePlaylistTrack(playlist.id, track.id, -1) }) { Text("Move up") }
                                 TextButton(onClick = { vm.movePlaylistTrack(playlist.id, track.id, 1) }) { Text("Move down") }
@@ -232,6 +241,7 @@ class MainActivity : ComponentActivity() {
                         Button(onClick = { tab = "Downloads"; playlistDownload = true }) { Text("Download Plex playlists") }
                         TextButton(onClick = { playlistIds = emptyList() }) { Text("New playlist") }
                     }
+                    TextButton(onClick = { vm.refreshPlaylists() }, enabled = !busy && !state.offline && connection.serverId.isNotBlank()) { Text("Refresh Plex playlists") }
                     LazyColumn { items(state.playlists, key = { it.id }) { p ->
                         Row(Modifier.fillMaxWidth().testTag("open-playlist-${p.id}").clickable { playlistId = p.id; tab = "Library"; group = "Tracks"; groupValue = null; search = ""; selected = emptySet() }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) { Text(p.name, fontSize = 18.sp); Text("${p.tracks.size} tracks • ${if (p.plex) "Plex" else "On this device"}", fontSize = 12.sp) }
@@ -265,11 +275,24 @@ class MainActivity : ComponentActivity() {
         }
     }
     playlistIds?.let { ids -> PlaylistDialog(state.playlists.filterNot { it.plex }, { playlistIds = null }) { name, target -> vm.playlist(name, ids, target); playlistIds = null } }
-    if (showSync) AlertDialog(onDismissRequest = { showSync = false }, title = { Text("Sync ${queued.size} ratings to Plex?") }, text = {
-        Column { Text("Only ratings are sent. Failed changes remain queued. No music is deleted.")
+    if (showSync) {
+        var confirmDeletion by remember { mutableStateOf(false) }
+        AlertDialog(onDismissRequest = { showSync = false }, title = { Text("Review Plex sync") }, text = {
+        Column { Text("${queued.size} ratings and ${deletions.size} deletion flags. Failed changes remain queued.")
             LazyColumn(Modifier.heightIn(max = 280.dp)) { items(queued) { Text("${it.pendingRating}★  ${it.artist} — ${it.title}", fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) } }
+            if (deletions.isNotEmpty()) {
+                Text("Plex deletion permanently removes server files. Downloaded copies on this device are kept.", color = MaterialTheme.colorScheme.error)
+                LazyColumn(Modifier.heightIn(max = 160.dp)) { items(deletions) { t ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${t.artist} — ${t.title}", modifier = Modifier.weight(1f), fontSize = 12.sp)
+                        TextButton(onClick = { vm.flagDeletion(setOf(t.id), false); confirmDeletion = false }) { Text("Unflag") }
+                    }
+                } }
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(confirmDeletion, { confirmDeletion = it }); Text("Delete these ${deletions.size} tracks from Plex") }
+            }
         }
-    }, confirmButton = { TextButton(onClick = { showSync = false; vm.syncRatings() }, enabled = !state.offline && !busy) { Text("Sync now") } }, dismissButton = { TextButton(onClick = { showSync = false }) { Text("Cancel") } })
+    }, confirmButton = { TextButton(onClick = { showSync = false; vm.syncRatings(if (confirmDeletion) deletions.map { it.id }.toSet() else emptySet()) }, enabled = !state.offline && !busy && (queued.isNotEmpty() || confirmDeletion)) { Text(if (confirmDeletion) "Sync and delete" else "Sync ratings only") } }, dismissButton = { TextButton(onClick = { showSync = false }) { Text("Cancel") } })
+    }
     if (showDiscard) AlertDialog(onDismissRequest = { showDiscard = false }, title = { Text("Discard queued ratings?") }, text = { Text("This removes unsynced Plex rating changes from this device. Existing Plex ratings and local-only ratings are kept.") },
         confirmButton = { TextButton(onClick = { vm.discardRatings(); showDiscard = false }) { Text("Discard") } }, dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("Cancel") } })
     if (showQueue) AlertDialog(onDismissRequest = { showQueue = false }, title = { Text("Playback queue") }, text = {
@@ -288,15 +311,26 @@ class MainActivity : ComponentActivity() {
         DropdownMenu(expanded, { expanded = false }) { options.forEach { value -> DropdownMenuItem(text = { Text(value) }, onClick = { choose(value); expanded = false }) } }
     }
 }
-@Composable private fun TrackRow(t: Track, selected: Boolean, current: Boolean, select: (Boolean) -> Unit, play: () -> Unit, rate: () -> Unit, transfer: () -> Unit, transferEnabled: Boolean) {
+@Composable private fun TrackRow(t: Track, selected: Boolean, current: Boolean, select: (Boolean) -> Unit, play: () -> Unit, rate: () -> Unit, transfer: () -> Unit, transferEnabled: Boolean, flag: () -> Unit, actionsEnabled: Boolean) {
     Row(Modifier.fillMaxWidth().background(if (current) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, RoundedCornerShape(12.dp)).padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Checkbox(selected, select)
+        AlbumArt(t, Modifier.size(40.dp))
         Column(Modifier.weight(1f).clickable(onClick = play).padding(vertical = 9.dp)) {
             Text(t.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             Text("${t.artist} • ${t.album}", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.secondary)
             Text("${if (t.downloaded) "↓ On device" else "Plex stream"}  •  ${time(t.duration)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+            if (t.pendingDeletion) Text("Plex deletion queued", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
         }
         TextButton(onClick = rate) { Text("${if (t.rating == 0) "☆" else "${t.ratingText}★"}${if (t.pendingRating != null) " ·" else ""}") }
+        if (t.remoteKey.isNotBlank()) {
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menu = true }, enabled = actionsEnabled) { Icon(Icons.Default.MoreVert, "Song actions: ${t.title}") }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(text = { Text(if (t.pendingDeletion) "Unflag Plex deletion" else "Flag for Plex deletion on sync") }, onClick = { flag(); menu = false })
+                }
+            }
+        }
         if (t.downloaded) IconButton(onClick = transfer, enabled = transferEnabled, modifier = Modifier.testTag("track-download-${t.id}")) {
             if (t.downloaded) Icon(Icons.Default.Delete, "Remove download: ${t.title}") else Icon(painterResource(R.drawable.ic_download), "Download: ${t.title}")
         }
@@ -311,12 +345,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun NowPlaying(t: Track, playing: Playing, controller: MediaController?, rate: () -> Unit, queue: () -> Unit) {
+@Composable private fun NowPlaying(t: Track, playing: Playing, controller: MediaController?, rate: () -> Unit, queue: () -> Unit, removeLocal: () -> Unit, flag: () -> Unit, actionsEnabled: Boolean) {
     var position by remember { mutableLongStateOf(0L) }; var duration by remember { mutableLongStateOf(t.duration) }
     LaunchedEffect(controller, t.id) { while (true) { position = controller?.currentPosition ?: 0; duration = (controller?.duration?.takeIf { it > 0 } ?: t.duration).coerceAtLeast(0); delay(500) } }
     Surface(tonalElevation = 6.dp) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                AlbumArt(t, Modifier.size(42.dp).padding(end = 6.dp))
                 Column(Modifier.weight(1f)) { Text(t.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(t.artist, fontSize = 12.sp) }
                 TextButton(onClick = rate) { Text("${t.ratingText}★") }
                 IconButton(onClick = { controller?.seekToPreviousMediaItem() }) { Icon(painterResource(R.drawable.ic_previous), "Previous track") }
@@ -324,7 +359,11 @@ class MainActivity : ComponentActivity() {
                 IconButton(onClick = { controller?.seekToNextMediaItem() }) { Icon(painterResource(R.drawable.ic_next), "Next track") }
             }
             Slider(value = position.coerceIn(0, duration.coerceAtLeast(1)).toFloat(), onValueChange = { controller?.seekTo(it.toLong()); position = it.toLong() }, valueRange = 0f..duration.coerceAtLeast(1).toFloat(), modifier = Modifier.height(24.dp))
-            TextButton(onClick = { PlaybackService.instance?.stopPlayback() }) { Text("Stop playback") }
+            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(onClick = { PlaybackService.instance?.stopPlayback() }) { Text("Stop playback") }
+                if (t.downloaded) TextButton(onClick = removeLocal, enabled = actionsEnabled) { Text("Delete local") }
+                if (t.remoteKey.isNotBlank()) TextButton(onClick = flag, enabled = actionsEnabled) { Text(if (t.pendingDeletion) "Unflag Plex deletion" else "Flag Plex deletion") }
+            }
             Row { Text("${time(position)} / ${time(duration)}", fontSize = 10.sp, modifier = Modifier.weight(1f)); Text(if (playing.radio) "Radio • Queue ›" else "Queue ›", fontSize = 11.sp, modifier = Modifier.clickable(onClick = queue)) }
             if (playing.error.isNotBlank()) Text(playing.error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
         }
@@ -350,7 +389,7 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.9.0 • Original-quality streaming and downloads. Device codec support determines which files can play.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.10.0 • Original-quality streaming and downloads. Album art is cached as you browse and play, including for offline use; Android may evict the cache when storage is low.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {
@@ -360,19 +399,18 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
     } }
 }
 @Composable private fun DeleteDialog(tracks: List<Track>, offline: Boolean, dismiss: () -> Unit, confirm: (Boolean, Boolean) -> Unit) {
-    var local by remember { mutableStateOf(true) }; var plex by remember { mutableStateOf(false) }; var typed by remember { mutableStateOf("") }
+    var local by remember { mutableStateOf(true) }; var plex by remember { mutableStateOf(false) }
     AlertDialog(onDismissRequest = dismiss, title = { Text("Review music deletion") }, text = {
         Column {
             Text("${tracks.size} selected tracks. This deletes files. Unsynced ratings are not sent first.", fontSize = 13.sp)
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(local, { local = it }); Text("This device (${tracks.count { it.downloaded }})") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(plex, { plex = it }, enabled = !offline); Text("Plex server (${tracks.count { it.remoteKey.isNotBlank() }})") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(plex, { plex = it }); Text("Flag Plex deletion on sync (${tracks.count { it.remoteKey.isNotBlank() }})") }
             if (plex) {
-                Text("Server deletion is permanent and affects other devices. Type DELETE to confirm.", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
-                OutlinedTextField(typed, { typed = it }, singleLine = true, label = { Text("DELETE") })
+                Text("Server files stay until you review and confirm deletion at the next manual sync.", fontSize = 13.sp)
             }
             LazyColumn(Modifier.heightIn(max = 180.dp)) { items(tracks) { Text("${it.ratingText}★ ${it.artist} — ${it.title}", fontSize = 12.sp, modifier = Modifier.padding(vertical = 5.dp)) } }
         }
-    }, confirmButton = { TextButton(onClick = { confirm(local, plex) }, enabled = tracks.isNotEmpty() && (local && tracks.any { it.downloaded } || plex && tracks.any { it.remoteKey.isNotBlank() }) && (!plex || typed == "DELETE")) { Text("Delete selected files") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
+    }, confirmButton = { TextButton(onClick = { confirm(local, plex) }, enabled = tracks.isNotEmpty() && (local && tracks.any { it.downloaded } || plex && tracks.any { it.remoteKey.isNotBlank() })) { Text("Apply selected actions") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
 }
 @Composable private fun PlaylistDialog(playlists: List<Playlist>, dismiss: () -> Unit, confirm: (String, String?) -> Unit) {
     var name by remember { mutableStateOf("") }

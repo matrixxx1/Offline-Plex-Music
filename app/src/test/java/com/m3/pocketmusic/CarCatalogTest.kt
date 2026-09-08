@@ -10,7 +10,7 @@ class CarCatalogTest {
     private val state = LibraryState(tracks = listOf(b, own, a), playlists = listOf(Playlist("p|one", "My playlist", listOf(b.id, a.id))))
     @Test fun rootHasFourBrowsableCategoriesAndRadioHasAllModes() {
         val c = CarCatalog(state)
-        assertEquals(listOf("Library", "Downloads", "Playlists", "Radio"), c.children(CarCatalog.ROOT).map { it.title })
+        assertEquals(listOf("Library", "Playlists", "Downloads", "Radio"), c.children(CarCatalog.ROOT).map { it.title })
         assertTrue(c.children(CarCatalog.ROOT).none { it.playable })
         assertEquals(PlayMode.entries.toList(), c.children("radio").map { it.radio })
         assertTrue(CarCatalog(state.copy(twoTrack = true)).children("radio").all { it.subtitle.contains("2 track") })
@@ -58,7 +58,7 @@ class CarCatalogTest {
         val all = leaves("tracks")
         assertEquals(10_005, all.size); assertEquals(10_005, all.map { it.id }.distinct().size)
         val q = c.queue(all[555].id)
-        assertTrue(q.tracks.size <= 500); assertEquals("555", q.tracks[q.start].id)
+        assertEquals(10_005, q.tracks.size); assertEquals("555", q.tracks[q.start].id)
     }
     @Test fun searchMatchesWordsAcrossMetadataAndHonorsSelectedResult() {
         val c = CarCatalog(state)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- Move Playlists to the second phone and Android Auto browse tab. Add phone playlist play, shuffle, and artist jumps.
+- Expose Android Auto shuffle, next artist, and cycling 0–5-star rating actions with explicit legacy icons. More song actions opens local deletion, a reversible Plex deletion flag, and Stop.
+- Save Plex deletion flags across restarts and library imports. Manual sync reviews flagged songs and requires explicit confirmation before deleting server files; local downloads remain. Ratings continue to wait for manual sync.
+- Cache album art while browsing and playing, including Android Auto now-playing artwork and offline reuse. Keep the disk cache bounded to 32 MiB.
+- Preserve complete playlist scope for car playback while feeding bounded chunks into the media session.
+
 ## 0.9.0
 
 - Fix quadratic playlist resolution on phone and Android Auto. Cache track lookups, move library filtering and download planning off the UI thread, and preserve repeated playlist entries with unique row keys.

@@ -96,9 +96,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             store.update { s ->
                 val old = s.tracks.associateBy { it.id }
                 val ids = loaded.map { it.id }.toSet()
-                val merged = loaded.map { t -> old[t.id]?.let { t.copy(localUri = it.localUri, pendingRating = it.pendingRating, localRating = it.localRating) } ?: t }
+                val merged = loaded.map { t -> old[t.id]?.let { t.copy(localUri = it.localUri, pendingRating = it.pendingRating, localRating = it.localRating, pendingDeletion = it.pendingDeletion) } ?: t }
                 // Retain missing remote tracks with downloads or unsynced ratings for explicit resolution.
-                s.copy(tracks = merged + s.tracks.filter { it.id !in ids && (it.remoteKey.isBlank() || it.downloaded || it.pendingRating != null) })
+                s.copy(tracks = merged + s.tracks.filter { it.id !in ids && (it.remoteKey.isBlank() || it.downloaded || it.pendingRating != null || it.pendingDeletion) })
             }
             progress.value = "Loading Plex playlists"
             val playlistResult = runCatching { api.playlists() }
@@ -119,7 +119,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             "${lists.size} Plex playlists refreshed. Select playlists to download."
         }
     }
-    fun syncRatings() = task {
+    fun syncRatings(deleteIds: Set<String> = emptySet()) = task {
         withContext(Dispatchers.IO) {
             check(!state.value.offline) { "Turn off Offline only before syncing." }
             val api = PlexApi(config); api.verifyServer()
@@ -132,7 +132,26 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                     store.patch(track.id) { RatingRules.acknowledged(it, sent) }; done++
                 } catch (e: Exception) { failures += "${track.title}: ${e.message}" }
             }
-            "$done ratings synced. ${failures.size} remain queued." + failures.take(3).joinToString("\n", prefix = if (failures.isEmpty()) "" else "\n")
+            var deleted = 0
+            val deletions = state.value.tracks.filter { it.pendingDeletion && it.id in deleteIds }
+            deletions.forEachIndexed { index, track ->
+                if (state.value.tracks.none { it.id == track.id && it.pendingDeletion }) return@forEachIndexed
+                progress.value = "Deleting from Plex ${index + 1}/${deletions.size}: ${track.title}"
+                try {
+                    check(state.value.downloads.none { it.id == track.id }) { "Finish or cancel this download first" }
+                    withContext(Dispatchers.Main) { PlaybackService.instance?.removeTracks(setOf(track.id)) }
+                    api.deleteTrack(track)
+                    store.update { s ->
+                        val remaining = s.tracks.map { if (it.id == track.id) it.copy(remoteKey = "", part = "", pendingDeletion = false, localRating = it.rating, pendingRating = null) else it }
+                            .filterNot { it.id == track.id && !it.downloaded }
+                        val valid = remaining.map { it.id }.toSet()
+                        s.copy(tracks = remaining, playlists = s.playlists.map { it.copy(tracks = it.tracks.filter { id -> id in valid }) })
+                    }
+                    deleted++
+                } catch (e: Exception) { failures += "${track.title}: ${e.message}" }
+                finally { withContext(Dispatchers.Main) { PlaybackService.instance?.finishRemoval(setOf(track.id)) } }
+            }
+            "$done ratings synced; $deleted Plex tracks deleted. ${failures.size} failed changes remain queued." + failures.take(3).joinToString("\n", prefix = if (failures.isEmpty()) "" else "\n")
         }
     }
     fun scan() = task {
@@ -208,14 +227,17 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }) }
     fun deletePlaylist(id: String) = store.update { it.copy(playlists = it.playlists.filterNot { p -> p.id == id && !p.plex }) }
+    fun flagDeletion(ids: Set<String>, flagged: Boolean) {
+        store.update { s -> s.copy(tracks = s.tracks.map { if (it.id in ids && it.remoteKey.isNotBlank()) it.copy(pendingDeletion = flagged) else it }) }
+        message.value = if (flagged) "Flagged for Plex deletion at next manual sync. Local downloads are kept." else "Plex deletion flag removed."
+    }
     fun removeDownloads(ids: Set<String>) = delete(state.value.tracks.filter { it.id in ids && it.downloaded }.map { it.id }.toSet(), local = true, server = false)
     fun delete(ids: Set<String>, local: Boolean, server: Boolean) = task {
         check(local || server)
         check(state.value.downloads.none { it.id in ids }) { "Finish downloads before deleting these tracks." }
-        if (server) check(!state.value.offline) { "Turn off Offline only for Plex deletion." }
+        if (server) flagDeletion(ids, true)
         PlaybackService.instance?.removeTracks(ids)
         try { withContext(Dispatchers.IO) {
-            val api = if (server) PlexApi(config).also { it.verifyServer() } else null
             val tracks = state.value.tracks.filter { it.id in ids }
             var done = 0; val failures = mutableListOf<String>()
             tracks.forEachIndexed { index, t ->
@@ -224,10 +246,6 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                     if (local && t.downloaded) {
                         LocalMusic.delete(getApplication(), t)
                         store.patch(t.id) { it.copy(localUri = "") }
-                    }
-                    if (server && t.remoteKey.isNotBlank()) {
-                        api!!.deleteTrack(t)
-                        store.patch(t.id) { it.copy(remoteKey = "", part = "", localRating = it.rating, pendingRating = null) }
                     }
                     store.update { s ->
                         val remaining = s.tracks.filterNot { it.id == t.id && it.remoteKey.isBlank() && !it.downloaded }

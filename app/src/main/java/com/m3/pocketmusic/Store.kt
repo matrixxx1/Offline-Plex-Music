@@ -36,6 +36,7 @@ object LibraryJson {
             put("localUri", t.localUri); put("serverRating", t.serverRating); put("localRating", t.localRating)
             put("pendingRating", t.pendingRating ?: JSONObject.NULL); put("bytes", t.bytes)
             put("exactPlexRating", t.exactPlexRating ?: JSONObject.NULL)
+            put("pendingDeletion", t.pendingDeletion); put("artwork", t.artwork)
         } }))
         put("playlists", JSONArray(s.playlists.map { p -> JSONObject().put("id", p.id).put("name", p.name)
             .put("tracks", JSONArray(p.tracks)).put("plex", p.plex) }))
@@ -55,7 +56,8 @@ object LibraryJson {
                 serverRating = t.optInt("serverRating"), localRating = t.optInt("localRating"),
                 pendingRating = if (t.isNull("pendingRating")) null else t.getInt("pendingRating"), bytes = t.optLong("bytes"),
                 exactPlexRating = if (t.isNull("exactPlexRating")) null else t.getDouble("exactPlexRating"),
-                moods = t.optJSONArray("moods")?.strings().orEmpty(), styles = t.optJSONArray("styles")?.strings().orEmpty()
+                moods = t.optJSONArray("moods")?.strings().orEmpty(), styles = t.optJSONArray("styles")?.strings().orEmpty(),
+                pendingDeletion = t.optBoolean("pendingDeletion"), artwork = t.optString("artwork")
             ) }.orEmpty(),
             playlists = o.optJSONArray("playlists")?.objects()?.map { Playlist(it.getString("id"), it.getString("name"), it.getJSONArray("tracks").strings(), it.optBoolean("plex")) }.orEmpty(),
             downloads = o.optJSONArray("downloads")?.objects()?.map { DownloadJob(it.getString("id"), it.getString("state"), it.optString("error")) }.orEmpty(),

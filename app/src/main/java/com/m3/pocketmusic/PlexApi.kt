@@ -110,6 +110,22 @@ class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpUR
             c.inputStream.use { consume(it, c.contentLengthLong) }
         } finally { c.disconnect() }
     }
+    fun artwork(path: String): ByteArray {
+        val c = connection(path, "GET")
+        try {
+            check(c.responseCode == 200) { "Artwork unavailable" }
+            return c.inputStream.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer); if (n < 0) break
+                    check(output.size() + n <= 5 * 1024 * 1024) { "Artwork too large" }
+                    output.write(buffer, 0, n)
+                }
+                output.toByteArray()
+            }
+        } finally { c.disconnect() }
+    }
     private fun parseTrack(o: JSONObject): Track {
         val media = o.optJSONArray("Media")?.optJSONObject(0)
         val part = media?.optJSONArray("Part")?.optJSONObject(0)
@@ -121,7 +137,8 @@ class PlexApi(val config: PlexConfig, private val open: (java.net.URL) -> HttpUR
             disc = o.optInt("parentIndex", 1), number = o.optInt("index"), duration = o.optLong("duration"),
             remoteKey = key, part = part?.optString("key").orEmpty(), extension = media?.optString("container", "mp3") ?: "mp3",
             serverRating = (o.optDouble("userRating", 0.0) / 2).roundToInt().coerceIn(0, 5), bytes = part?.optLong("size") ?: 0,
-            exactPlexRating = o.optDouble("userRating", 0.0))
+            exactPlexRating = o.optDouble("userRating", 0.0),
+            artwork = o.optString("parentThumb").ifBlank { o.optString("thumb") })
     }
     private fun tags(o: JSONObject?, field: String) = cleanTags(o?.optJSONArray(field)?.objects()?.map { it.optString("tag") }.orEmpty())
     private fun cleanTags(values: List<String>) = values.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase(java.util.Locale.ROOT) }

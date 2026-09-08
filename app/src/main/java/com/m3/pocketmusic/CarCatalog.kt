@@ -34,7 +34,7 @@ class CarCatalog(private val state: LibraryState) {
         }
     }
     private fun rawChildren(parent: String): List<CarEntry> = when (parent) {
-        ROOT -> listOf(CarEntry("library", "Library"), CarEntry("downloads", "Downloads"), CarEntry("playlists", "Playlists"), CarEntry("radio", "Radio"))
+        ROOT -> listOf(CarEntry("library", "Library"), CarEntry("playlists", "Playlists"), CarEntry("downloads", "Downloads"), CarEntry("radio", "Radio"))
         "library" -> listOf(CarEntry("artists", "Artists"), CarEntry("albums", "Albums"), CarEntry("genres", "Genres"), CarEntry("tracks", "All tracks"))
         "artists" -> ordered.groupBy { it.artistGroup }.map { (key, list) -> CarEntry("artist|${encode(key)}", list.first().artist, "${list.size} tracks") }
         "albums" -> ordered.groupBy { it.albumGroup }.map { (key, list) -> CarEntry("album|${encode(key)}", list.first().album, list.first().artist) }
@@ -70,10 +70,9 @@ class CarCatalog(private val state: LibraryState) {
             val trackId = decode(parts[2]) ?: return CarQueue(emptyList())
             val list = scopedTracks(parent)
             val index = list.indexOfFirst { it.id == trackId }
-            // Bound the playback queue as well as browse results for Binder transport.
+            // Keep full playlist scope here; the service publishes bounded playback chunks.
             if (index >= 0) {
-                val from = (index - 25).coerceAtLeast(0)
-                return CarQueue(list.drop(from).take(500), index - from)
+                return CarQueue(list, index)
             }
             return CarQueue(emptyList())
         }

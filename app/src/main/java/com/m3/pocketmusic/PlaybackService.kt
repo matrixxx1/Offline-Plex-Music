@@ -35,6 +35,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class Playing(val trackId: String? = null, val playing: Boolean = false, val error: String = "", val radio: Boolean = false)
 class PlaybackService : MediaLibraryService() {
@@ -46,6 +47,7 @@ class PlaybackService : MediaLibraryService() {
     private var sequence: List<Track> = emptyList()
     private var sequencePosition = 0
     private var radio = false
+    private var moreCarActions = false
     private var removingIds: Set<String> = emptySet()
     private var scopeIds: Set<String>? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -62,17 +64,23 @@ class PlaybackService : MediaLibraryService() {
         player.setWakeMode(C.WAKE_MODE_LOCAL)
         session = MediaLibrarySession.Builder(this, object : ForwardingPlayer(player) {
             override fun stop() { stopPlayback() }
-        }, CarCallback()).setMediaButtonPreferences(listOf(
-            CommandButton.Builder(CommandButton.ICON_STOP).setDisplayName("Stop playback").setSessionCommand(SessionCommand(STOP, Bundle.EMPTY)).build(),
-            CommandButton.Builder(CommandButton.ICON_STAR_UNFILLED).setDisplayName("Rate 1 star · queued").setSessionCommand(SessionCommand(RATE_ONE, Bundle.EMPTY)).build(),
-            CommandButton.Builder(CommandButton.ICON_STAR_FILLED).setDisplayName("Rate 5 stars · queued").setSessionCommand(SessionCommand(RATE_FIVE, Bundle.EMPTY)).build()
-        )).setSessionActivity(PendingIntent.getActivity(this, 0,
+        }, CarCallback()).setCustomLayout(carButtons()).setMediaButtonPreferences(carButtons()).setSessionActivity(PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build()
         player.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 status.value = status.value.copy(trackId = player.currentMediaItem?.mediaId, playing = player.isPlaying, radio = radio)
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                updateCarButtons()
+                val track = musicStore.state.value.tracks.find { it.id == mediaItem?.mediaId }
+                if (track != null && mediaItem?.mediaMetadata?.artworkData == null) scope.launch {
+                    val art = ArtworkCache.load(this@PlaybackService, track)
+                    if (art != null && player.currentMediaItem?.mediaId == track.id) {
+                        val bytes = java.io.ByteArrayOutputStream().also { art.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray()
+                        val current = player.currentMediaItem!!
+                        player.replaceMediaItem(player.currentMediaItemIndex, current.buildUpon().setMediaMetadata(current.mediaMetadata.buildUpon().setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER).build()).build())
+                    }
+                }
                 if (mediaItem != null && player.currentMediaItemIndex >= player.mediaItemCount - 2) {
                     if (radio) appendTask() else appendSequential()
                 }
@@ -115,11 +123,12 @@ class PlaybackService : MediaLibraryService() {
                     subscriptions.values.flatMap { it }.distinct().forEach { parent -> session?.notifyChildrenChanged(parent, catalog.children(parent).size, null) }
                 }
                 previousCatalog = state
+                updateCarButtons()
                 val index = player.currentMediaItemIndex
                 val current = player.currentMediaItem
                 val updated = state.tracks.find { it.id == current?.mediaId }
                 if (current != null && updated != null && current.mediaMetadata.userRating != starRating(updated)) {
-                    player.replaceMediaItem(index, current.buildUpon().setMediaMetadata(trackMetadata(updated)).build())
+                    player.replaceMediaItem(index, current.buildUpon().setMediaMetadata(current.mediaMetadata.buildUpon().setUserRating(starRating(updated)).build()).build())
                 }
             }
         }
@@ -128,6 +137,38 @@ class PlaybackService : MediaLibraryService() {
         stopPlayback()
         config = musicStore.credentials.read()
         http.setDefaultRequestProperties(mapOf("X-Plex-Token" to config.token))
+    }
+    private fun carButtons(): List<CommandButton> {
+        val track = musicStore.state.value.tracks.find { it.id == player.currentMediaItem?.mediaId }
+        fun button(icon: Int, resource: Int, label: String, action: String) = CommandButton.Builder(icon)
+            .setIconResId(resource).setDisplayName(label).setSlots(CommandButton.SLOT_OVERFLOW)
+            .setSessionCommand(SessionCommand(action, Bundle.EMPTY)).build()
+        val more = button(CommandButton.ICON_UNDEFINED, R.drawable.ic_more, if (moreCarActions) "Back to playback actions" else "More song actions", MORE_ACTIONS)
+        return if (!moreCarActions) listOf(
+            button(CommandButton.ICON_SHUFFLE_ON, R.drawable.ic_shuffle, "Shuffle playlist", SHUFFLE),
+            button(CommandButton.ICON_STAR_FILLED, R.drawable.ic_star, "Rating ${track?.rating ?: 0}/5 · tap for next rating", RATE_CYCLE),
+            button(CommandButton.ICON_NEXT, R.drawable.ic_next, "Next artist in playlist", NEXT_ARTIST), more
+        ) else listOf(
+            button(CommandButton.ICON_UNDEFINED, R.drawable.ic_delete, if (track?.pendingDeletion == true) "Unflag Plex deletion" else "Flag Plex deletion on sync", FLAG_DELETE),
+            button(CommandButton.ICON_UNDEFINED, R.drawable.ic_delete, "Delete downloaded copy", DELETE_LOCAL),
+            button(CommandButton.ICON_STOP, R.drawable.ic_stop, "Stop playback", STOP), more
+        )
+    }
+    private fun updateCarButtons() {
+        session?.setCustomLayout(carButtons())
+        session?.setMediaButtonPreferences(carButtons())
+    }
+    private fun playlistSequence(): List<Track> = if (sequence.isNotEmpty()) sequence else
+        (0 until player.mediaItemCount).mapNotNull { i -> musicStore.state.value.tracks.find { it.id == player.getMediaItemAt(i).mediaId } }
+    private fun shufflePlaylist() { playTracks(playlistSequence().shuffled()) }
+    private fun nextArtist() {
+        val tracks = playlistSequence()
+        val current = tracks.indexOfFirst { it.id == player.currentMediaItem?.mediaId }
+        val artist = tracks.getOrNull(current)?.artistGroup ?: return
+        val next = ((current + 1 until tracks.size) + (0 until current)).firstOrNull {
+            tracks[it].artistGroup != artist && (!musicStore.state.value.offline || tracks[it].downloaded)
+        } ?: return
+        playTracks(tracks, next)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) {
@@ -219,7 +260,7 @@ class PlaybackService : MediaLibraryService() {
         val catalog = CarCatalog(musicStore.state.value.let { it.copy(tracks = it.tracks.filterNot { t -> t.id in removingIds }) })
         val requested = items.getOrNull(startIndex.coerceAtLeast(0)) ?: items.firstOrNull()
         val query = requested?.requestMetadata?.searchQuery
-        val queue = if (query != null) CarQueue(catalog.search(query).take(500)) else catalog.queue(requested?.mediaId.orEmpty())
+        val queue = if (query != null) CarQueue(catalog.search(query)) else catalog.queue(requested?.mediaId.orEmpty())
         val resolved: List<MediaItem>
         var index = queue.start
         if (queue.mode != null) {
@@ -232,8 +273,10 @@ class PlaybackService : MediaLibraryService() {
             index = 0
         } else {
             radio = false; scopeIds = null
+            sequence = queue.tracks
+            sequencePosition = (index - 50).coerceAtLeast(0)
             // Only resolve IDs from our own cached library. Ignore controller-provided URIs.
-            resolved = queue.tracks.mapNotNull { media(it) }
+            resolved = nextSequentialChunk()
             val selected = queue.tracks.getOrNull(index)?.id
             index = resolved.indexOfFirst { it.mediaId == selected }.coerceAtLeast(0)
         }
@@ -243,7 +286,10 @@ class PlaybackService : MediaLibraryService() {
     private inner class CarCallback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
-                .add(SessionCommand(STOP, Bundle.EMPTY)).add(SessionCommand(RATE_ONE, Bundle.EMPTY)).add(SessionCommand(RATE_FIVE, Bundle.EMPTY)).build()
+                .add(SessionCommand(STOP, Bundle.EMPTY)).add(SessionCommand(RATE_ONE, Bundle.EMPTY)).add(SessionCommand(RATE_FIVE, Bundle.EMPTY))
+                .add(SessionCommand(SHUFFLE, Bundle.EMPTY)).add(SessionCommand(NEXT_ARTIST, Bundle.EMPTY))
+                .add(SessionCommand(RATE_CYCLE, Bundle.EMPTY)).add(SessionCommand(FLAG_DELETE, Bundle.EMPTY))
+                .add(SessionCommand(DELETE_LOCAL, Bundle.EMPTY)).add(SessionCommand(MORE_ACTIONS, Bundle.EMPTY)).build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller).setAvailableSessionCommands(commands)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS).build()
         }
@@ -296,8 +342,43 @@ class PlaybackService : MediaLibraryService() {
         }
         override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
             if (customCommand.customAction == STOP) { stopPlayback(); return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS)) }
+            if (customCommand.customAction == MORE_ACTIONS) {
+                moreCarActions = !moreCarActions; updateCarButtons()
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            val track = musicStore.state.value.tracks.find { it.id == player.currentMediaItem?.mediaId }
+                ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
+            when (customCommand.customAction) {
+                SHUFFLE -> shufflePlaylist()
+                NEXT_ARTIST -> nextArtist()
+                RATE_CYCLE -> musicStore.rate(setOf(track.id), (track.rating + 1) % 6)
+                FLAG_DELETE -> {
+                    if (track.remoteKey.isBlank()) return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+                    musicStore.patch(track.id) { it.copy(pendingDeletion = !it.pendingDeletion) }
+                }
+                DELETE_LOCAL -> {
+                    if (!track.downloaded || musicStore.state.value.downloads.any { it.id == track.id }) return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
+                    removeTracks(setOf(track.id))
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                LocalMusic.delete(this@PlaybackService, track)
+                                musicStore.update { s ->
+                                    val remaining = s.tracks.map { if (it.id == track.id) it.copy(localUri = "") else it }.filterNot { it.id == track.id && it.remoteKey.isBlank() }
+                                    val ids = remaining.map { it.id }.toSet()
+                                    s.copy(tracks = remaining, playlists = s.playlists.map { it.copy(tracks = it.tracks.filter { id -> id in ids }) })
+                                }
+                            }
+                        } catch (e: Exception) { status.value = status.value.copy(error = "Local deletion failed: ${e.message}") }
+                        finally { finishRemoval(setOf(track.id)) }
+                    }
+                }
+                else -> {
             val stars = when (customCommand.customAction) { RATE_ONE -> 1f; RATE_FIVE -> 5f; else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED)) }
             return onSetRating(session, controller, StarRating(5, stars))
+                }
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
     }
     fun removeTracks(ids: Set<String>) {
@@ -329,6 +410,12 @@ class PlaybackService : MediaLibraryService() {
         const val STOP = "com.m3.pocketmusic.STOP"
         const val RATE_ONE = "com.m3.pocketmusic.RATE_ONE"
         const val RATE_FIVE = "com.m3.pocketmusic.RATE_FIVE"
+        const val RATE_CYCLE = "com.m3.pocketmusic.RATE_CYCLE"
+        const val SHUFFLE = "com.m3.pocketmusic.SHUFFLE"
+        const val NEXT_ARTIST = "com.m3.pocketmusic.NEXT_ARTIST"
+        const val FLAG_DELETE = "com.m3.pocketmusic.FLAG_DELETE"
+        const val DELETE_LOCAL = "com.m3.pocketmusic.DELETE_LOCAL"
+        const val MORE_ACTIONS = "com.m3.pocketmusic.MORE_ACTIONS"
         var instance: PlaybackService? = null
             private set
         val status = MutableStateFlow(Playing())
