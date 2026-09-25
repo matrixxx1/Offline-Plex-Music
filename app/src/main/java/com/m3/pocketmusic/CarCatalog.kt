@@ -3,14 +3,15 @@ package com.m3.pocketmusic
 import java.util.Base64
 import java.util.Locale
 
-data class CarEntry(val id: String, val title: String, val subtitle: String = "", val track: Track? = null, val radio: PlayMode? = null) {
-    val playable get() = track != null || radio != null
+data class CarEntry(val id: String, val title: String, val subtitle: String = "", val track: Track? = null, val radio: PlayMode? = null, val shuffle: Boolean = false) {
+    val playable get() = track != null || radio != null || shuffle
 }
 data class CarQueue(val tracks: List<Track>, val start: Int = 0, val mode: PlayMode? = null)
 
 /** A cached, network-free car library. Explicit range folders work with hosts without pagination. */
 class CarCatalog(private val state: LibraryState) {
-    val tracks = state.tracks.filter { (!state.offline || it.downloaded) && (it.downloaded || it.part.isNotBlank()) }
+    // The car is intentionally an offline-only, distraction-minimized surface.
+    val tracks = state.tracks.filter { it.downloaded }
     private val byId = tracks.associateBy { it.id }
     private val ordered = tracks.sortedWith(compareBy<Track> { it.artist.lowercase(Locale.ROOT) }.thenBy { it.albumGroup }.thenBy { it.disc }.thenBy { it.number }.thenBy { it.title })
     fun children(parent: String): List<CarEntry> {
@@ -34,7 +35,7 @@ class CarCatalog(private val state: LibraryState) {
         }
     }
     private fun rawChildren(parent: String): List<CarEntry> = when (parent) {
-        ROOT -> listOf(CarEntry("library", "Library"), CarEntry("playlists", "Playlists"), CarEntry("downloads", "Downloads"), CarEntry("radio", "Radio"))
+        ROOT -> if (tracks.isEmpty()) emptyList() else listOf(CarEntry(SHUFFLE_ALL, "Shuffle offline music", "${tracks.size} songs on this device", shuffle = true))
         "library" -> listOf(CarEntry("artists", "Artists"), CarEntry("albums", "Albums"), CarEntry("genres", "Genres"), CarEntry("tracks", "All tracks"))
         "artists" -> ordered.groupBy { it.artistGroup }.map { (key, list) -> CarEntry("artist|${encode(key)}", list.first().artist, "${list.size} tracks") }
         "albums" -> ordered.groupBy { it.albumGroup }.map { (key, list) -> CarEntry("album|${encode(key)}", list.first().album, list.first().artist) }
@@ -63,6 +64,7 @@ class CarCatalog(private val state: LibraryState) {
     }
     fun searchEntries(query: String) = search(query).take(100).map { CarEntry(playId("search|${encode(query)}", it.id), it.title, it.artist, track = it) }
     fun queue(id: String): CarQueue {
+        if (id == SHUFFLE_ALL) return CarQueue(tracks.shuffled())
         if (id.startsWith("radio|")) return PlayMode.entries.find { it.name == id.substringAfter('|') }?.let { CarQueue(tracks, mode = it) } ?: CarQueue(emptyList())
         val parts = id.split('|')
         if (parts.size == 3 && parts[0] == "play") {
@@ -80,6 +82,7 @@ class CarCatalog(private val state: LibraryState) {
     }
     fun item(id: String): CarEntry? {
         if (id == ROOT) return CarEntry(ROOT, "Offline Plex music")
+        if (id == SHUFFLE_ALL && tracks.isNotEmpty()) return CarEntry(SHUFFLE_ALL, "Shuffle offline music", "${tracks.size} songs on this device", shuffle = true)
         if (id.startsWith("play|") || tracks.any { it.id == id }) return queue(id).let { q -> q.tracks.getOrNull(q.start)?.let { CarEntry(id, it.title, it.artist, track = it) } }
         if (id.startsWith("radio|")) return PlayMode.entries.find { it.name == id.substringAfter('|') }?.let { CarEntry(id, it.label, radio = it) }
         if (id.startsWith("range|")) return children(id).takeIf { it.isNotEmpty() }?.let { CarEntry(id, "More music") }
@@ -87,6 +90,7 @@ class CarCatalog(private val state: LibraryState) {
     }
     companion object {
         const val ROOT = "car-root"
+        const val SHUFFLE_ALL = "offline-shuffle-all"
         private fun encode(value: String) = Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
         private fun decode(value: String) = runCatching { String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8) }.getOrNull()
         private fun playId(parent: String, id: String) = "play|${encode(parent)}|${encode(id)}"

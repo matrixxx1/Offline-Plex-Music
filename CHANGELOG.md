@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+
+- Add a dedicated, default Offline screen with a freshly randomized on-device queue, current-song card, and only previous, play/pause, next, reshuffle, scan, and settings controls.
+- Reduce Android Auto to one **Shuffle offline music** launch action followed by the host's standard previous/play-pause/next playback screen. Car browsing, streaming-only songs, and custom action overflow are intentionally hidden.
+- Check the latest GitHub release whenever the app launches. If a newer APK exists, ask before downloading it through Android's download manager and opening Android's installer.
+
 ## 0.11.1
 
 - Move phone control saves and Android Auto rating/deletion-flag saves off the main thread so a download writing the library cannot block touch input. Preserve durable saves, edit order, and error reporting.

@@ -1,18 +1,20 @@
 # Offline Plex Music
 
-A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.11.1 is a sideloadable development build.
+A native Kotlin/Compose music player for a Plex music library and a folder of local audio. The Android app is named **Offline Plex music**. Android 8.0 or newer. Version 0.12.0 is a sideloadable development build.
 
 [Download the latest APK](https://github.com/matrixxx1/Offline-Plex-Music/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Features
 
+- **Offline** is the default, distraction-free screen. It randomizes every downloaded or scanned local song, shows the current song, and keeps only previous, play/pause, next, reshuffle, scan, and settings controls.
+- On launch, the app checks the latest GitHub release. A newer APK is never downloaded without asking; after approval, Android's normal download and package-installer screens handle the update.
 - **Now playing** is a full mobile screen with album art, song/artist/album information, seeking, previous/play/pause/next, shuffle, next artist, stop, rating, local deletion, Plex deletion flags, sync review, and a tappable playback queue. Tap the compact player's song information to open it.
 - **Selected playlist** is an editor reached with Edit in Playlists or Edit playlist in Library. Rename, add songs, move an individual occurrence to any position, remove entries, shuffle the order, or save a local copy. Plex changes survive refreshes and wait for **Sync playlist** and its review. Playlist removal never deletes song files. Plex smart playlists are read-only; copy them locally to edit.
 - Playlist sync uses entry IDs, preserves duplicates, verifies the resulting name/order, and checkpoints completed steps for retry. A server-side conflict stops sync and retains local edits. Reload from Plex explicitly discards the draft; save a local copy first if needed. Playlist sync is separate from ratings and media deletion.
 - Downloads validate the current HTTP response length instead of Plex's cached library size. Completed files record their actual byte count; truncated/empty responses and interrupted transfers are still rejected. For earlier **Downloaded size differs from Plex** failures, open **Downloads → Transfers → Resume / retry** after updating.
 
 - Visible Plex tab with browser sign-in, server discovery, and one-step connection/import. Manual URL/token setup is available under Advanced connection.
-- Android Auto media browsing, playback, voice search, four radio modes, and queued rating controls. See setup below for sideloaded APKs.
+- Android Auto opens to one **Shuffle offline music** action, then uses the car host's standard current-song, previous, play/pause, and next controls. See setup below for sideloaded APKs.
 - Original-quality Plex streaming and bulk downloads, with background playback, notification/headset controls, next, previous, seeking, and a playback queue.
 - Simple Plex playlist downloads: select one or several audio playlists, then queue their missing songs. Shared songs download once. Download all missing songs, or use a maximum MB budget with completely random songs or a numeric per-artist limit.
 - Remove buttons on downloaded tracks and each artist, album, or genre. Downloads → On device supports filtering and reviewed removal of one track, selected tracks, a whole artist/album/genre, everything below a chosen rating, or all downloaded files.
@@ -20,8 +22,7 @@ A native Kotlin/Compose music player for a Plex music library and a folder of lo
 - Track, artist, album, genre, and playlist browsing; search and select-all apply to the current view. Artist/album/genre checkboxes select the entire group for bulk operations.
 - One-to-five-star ratings. Plex changes are stored durably on the device, coalesced per track, and **only sent when you explicitly choose Sync ratings**. Failed changes stay queued. A new rating made during a sync stays queued too. Local-only music has local ratings.
 - **Clean 1★** reviews exactly one-star tracks in the current view. Local deletion and Plex deletion flags are separate choices. Flags survive restarts; manual Sync lists them and requires explicit confirmation to permanently delete server files. Rating-only sync does not delete music. Local copies are kept when deleting from Plex.
-- Playlists is the second tab on the phone and Android Auto. Phone Library offers Play, Shuffle, artist jumps, individual song selection, and next/previous controls.
-- In Android Auto's full playback screen, open the action overflow for Shuffle playlist, Next artist, and Rating (each tap cycles 0–5 stars, queued until phone sync). More song actions opens Delete downloaded copy, Flag/Unflag Plex deletion, and Stop; Back returns to playback actions. Button placement is controlled by the car host.
+- Phone Library and Playlists retain their full management controls behind **Library & setup**; the launch screen stays focused on offline playback.
 - Album art is retrieved as you browse or play and reused offline from a 32 MiB disk cache. Embedded art is supported for local files. Android can evict cached art when storage is low.
 - Local playlists: create, add selected tracks, remove tracks, reorder tracks, delete a playlist without deleting its music. Existing Plex audio playlists are imported with your library and can be used as a playback, radio, rating, and download scope.
 - Download jobs persist across restarts; pause, resume/retry, and cancel queue. Completed downloads remain after canceling. Interrupted files restart from the beginning; byte count is checked before they become available offline.
@@ -40,7 +41,7 @@ After a task finishes, another group is selected randomly. The immediately previ
 
 ## First setup
 
-1. Install `Offline-Plex-Music-0.9.0.apk` from the GitHub release (or `artifacts` after building locally) on Android.
+1. Install the current `Offline-Plex-Music-<version>.apk` from the GitHub release (or `artifacts` after building locally) on Android.
 2. Tap **Connect Plex** in Library, or open the **Plex** tab. Choose **Sign in with Plex**, authorize in your browser, and return to the app. Select your server and tap **Connect & import music**. Alternatively, expand **Advanced connection** and enter a server URL and `X-Plex-Token`. Server tokens are encrypted using Android Keystore and app-data backup/transfer is excluded.
 3. Open **Library** and tap a track to stream immediately. **Plex → Import / refresh music** or **Library → Import music** updates accessible music libraries and audio playlists. Import never sends queued ratings or deletes media.
 4. For offline listening, use **Plex → Choose download folder** or **Settings → Choose folder**, such as `Music/OfflinePlexMusic`. Android may prohibit selecting the root of Downloads; choose a dedicated subfolder under Music instead.
@@ -88,12 +89,11 @@ For the example “rate an artist one star and remove them”: open Artists, sel
 
 1. Install the APK on your phone and finish Plex connection/import or scan local music before driving.
 2. Because this APK comes from GitHub, enable **Unknown sources** in Android Auto's developer settings if it is missing from the car launcher. Open Android Auto settings, expand the version information, tap it ten times, accept developer mode, then open the overflow menu → Developer settings → Unknown sources. Reconnect Android Auto and check Customize launcher. See [Google's sideload testing instructions](https://developer.android.com/training/cars/testing#unknown-sources).
-3. Open **Offline Plex music** on the car display. The four sections are **Library**, **Downloads**, **Playlists**, and **Radio**. Library contains artists, albums, genres, and tracks. Downloads includes your own scanned files.
+3. Open **Offline Plex music** on the car display and choose **Shuffle offline music**. Only downloaded Plex tracks and audio discovered by **Scan folder** are included, in randomized order.
 4. Use the car's play/pause, next/previous, seek, and voice-search controls. Previous follows normal Android media behavior: after a few seconds it restarts the current song; press again to go to the previous song. Phone controls retain their direct previous-track behavior.
-5. **Stop playback** clears the queue and releases playback; it is available on the phone and as a car custom action. Switching to another player (permanent audio-focus loss) also stops this player. Temporary interruptions such as navigation prompts retain normal audio-focus behavior.
-6. Radio uses the phone's **2 Track limit** setting. The **Rating** action cycles through 0–5 stars and saves on the phone. Open **More song actions** for local deletion and Plex deletion flags. Sync and permanent server deletion review remain on the phone. Available custom-action placement depends on your car host.
+5. Switching to another player (permanent audio-focus loss) stops this player. Temporary interruptions such as navigation prompts retain normal audio-focus behavior.
 
-Offline mode applies to car browsing, search, and radio. The car interface uses your cached library and can start before the phone UI opens. Set up Plex, manage downloads, sync ratings, and review deletions on the phone. This is Android Auto projection from your phone, not a separate app installed into Android Automotive OS.
+The car interface is always offline-only and can start before the phone UI opens. Set up Plex, manage downloads, scan folders, sync ratings, and review deletions on the phone. This is Android Auto projection from your phone, not a separate app installed into Android Automotive OS.
 
 Large browse lists use range folders of at most 100 items. Car search returns up to 100 matches; narrow the query for more specific results. Phone playlist playback feeds the media session in chunks of 100 songs and keeps nearby previous-track history while continuing through the full list. A sequential car request contains up to 500 tracks around the selected song; radio streams groups into the player in chunks of at most 100 tracks, retaining previous-track history without placing a whole large artist or genre in the media session at once. A physical Android Auto head unit / Desktop Head Unit session has not been available for visual verification. Automated tests exercise both the Android platform browser/transport bridge used by car hosts and the Media3 browser.
 

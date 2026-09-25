@@ -87,80 +87,43 @@ class CarIntegrationTest {
         assertTrue("Browse $parent timed out", loaded.await(15, TimeUnit.SECONDS))
         return requireNotNull(result) { "Browse $parent failed" }
     }
-    @Test fun legacyCarBrowserPlaysPlaylistSkipsSeeksAndQueuesRatings() {
+    @Test fun legacyCarBrowserShowsOfflineShuffleAndStandardTransportControls() {
         connect()
-        assertEquals(4, children(CarCatalog.ROOT).size)
-        val playlist = children("playlists").single()
-        val songs = children(playlist.mediaId!!)
-        assertEquals(listOf("Second car song", "First car song"), songs.map { it.description.title.toString() })
-        main { controller.transportControls.playFromMediaId(songs.first().mediaId, Bundle.EMPTY) }
-        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-b" }
+        val action = children(CarCatalog.ROOT).single()
+        assertEquals("Shuffle offline music", action.description.title.toString())
+        assertTrue(action.isPlayable)
+        main { controller.transportControls.playFromMediaId(action.mediaId, Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId in setOf("car-a", "car-b") }
+        val first = PlaybackService.status.value.trackId
         main { controller.transportControls.skipToNext() }
-        until { PlaybackService.status.value.trackId == "car-a" }
-        main { controller.transportControls.sendCustomAction(PlaybackService.RATE_ONE, Bundle.EMPTY) }
-        until { store.state.value.tracks.first().pendingRating == 1 }
-        assertEquals(1, MusicStore(context).state.value.tracks.first().pendingRating)
-        assertEquals(0, store.state.value.tracks.first().serverRating)
-        main { controller.transportControls.setRating(android.media.Rating.newStarRating(android.media.Rating.RATING_5_STARS, 4f)) }
-        until { store.state.value.tracks.first().pendingRating == 4 }
+        until { PlaybackService.status.value.trackId != first }
         main { controller.transportControls.seekTo(5000); controller.transportControls.pause() }
         until { !PlaybackService.status.value.playing }
         assertTrue(controller.playbackState!!.position >= 4500)
         main { controller.transportControls.seekTo(0); controller.transportControls.skipToPrevious(); controller.transportControls.play() }
-        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-b" }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == first }
         main { controller.transportControls.stop() }
         until { !PlaybackService.status.value.playing }
     }
-    @Test fun legacyCarAdvertisesVisibleActionsAndQueuesDeletionWithoutNetwork() {
+    @Test fun legacyCarKeepsTheShuffledQueueOfflineAndHidesCustomActions() {
         connect()
-        assertEquals("Playlists", children(CarCatalog.ROOT)[1].description.title.toString())
-        store.update { s -> s.copy(tracks = s.tracks.map { if (it.id == "car-b") it.copy(artist = "Other artist") else it }) }
-        val songs = children(children("playlists").single().mediaId!!)
-        main { controller.transportControls.playFromMediaId(songs.first().mediaId, Bundle.EMPTY) }
-        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-b" }
-        fun actions() = controller.playbackState?.customActions.orEmpty()
-        until { actions().map { it.action }.containsAll(listOf(PlaybackService.SHUFFLE, PlaybackService.RATE_CYCLE, PlaybackService.NEXT_ARTIST, PlaybackService.MORE_ACTIONS)) }
-        assertTrue(actions().all { it.icon != 0 && it.name.isNotBlank() })
-        main { controller.transportControls.sendCustomAction(PlaybackService.NEXT_ARTIST, Bundle.EMPTY) }
-        until { PlaybackService.status.value.trackId == "car-a" }
-        main { controller.transportControls.sendCustomAction(PlaybackService.RATE_CYCLE, Bundle.EMPTY) }
-        until { store.state.value.tracks.first().pendingRating == 1 }
-        main { controller.transportControls.sendCustomAction(PlaybackService.MORE_ACTIONS, Bundle.EMPTY) }
-        until { actions().any { it.action == PlaybackService.FLAG_DELETE } && actions().any { it.action == PlaybackService.DELETE_LOCAL } }
-        main { controller.transportControls.sendCustomAction(PlaybackService.FLAG_DELETE, Bundle.EMPTY) }
-        until { store.state.value.tracks.first().pendingDeletion }
-        assertTrue(MusicStore(context).state.value.tracks.first().pendingDeletion)
-        assertEquals("1", store.state.value.tracks.first().remoteKey)
-        assertTrue(store.state.value.tracks.first().downloaded)
-        until { actions().any { it.name.toString() == "Unflag Plex deletion" } }
-        main { controller.transportControls.sendCustomAction(PlaybackService.FLAG_DELETE, Bundle.EMPTY) }
-        until { !store.state.value.tracks.first().pendingDeletion }
-        main { controller.transportControls.sendCustomAction(PlaybackService.MORE_ACTIONS, Bundle.EMPTY) }
-        until { actions().any { it.action == PlaybackService.SHUFFLE } }
-        main { controller.transportControls.sendCustomAction(PlaybackService.SHUFFLE, Bundle.EMPTY) }
+        main { controller.transportControls.playFromMediaId(CarCatalog.SHUFFLE_ALL, Bundle.EMPTY) }
         until { PlaybackService.status.value.playing }
+        assertTrue(controller.playbackState?.customActions.orEmpty().isEmpty())
         assertEquals(setOf("car-a", "car-b"), controller.queue!!.map { it.description.mediaId }.toSet())
     }
-    @Test fun legacyVoiceSearchOfflineBrowsingAndRadioRespectPhoneSettings() {
+    @Test fun legacyVoiceSearchOnlyUsesDownloadedMusic() {
         connect()
-        assertEquals(3, children("tracks").size)
-        assertEquals(2, children("downloads").size)
-        store.update { it.copy(offline = true, twoTrack = true) }
-        assertEquals(2, children("tracks").size)
+        assertEquals(1, children(CarCatalog.ROOT).size)
         main { controller.transportControls.playFromSearch("first car song", Bundle.EMPTY) }
         until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == "car-a" }
-        val modes = children("radio")
-        assertEquals(4, modes.size)
-        main { controller.transportControls.playFromMediaId("radio|RANDOM_ALBUM", Bundle.EMPTY) }
-        until { PlaybackService.status.value.radio && PlaybackService.status.value.playing }
-        assertEquals(PlayMode.RANDOM_ALBUM, store.state.value.mode)
-        assertTrue(store.state.value.twoTrack)
-        assertTrue(controller.queue!!.all { it.description.mediaId in listOf("car-a", "car-b") })
+        main { controller.transportControls.playFromSearch("streaming only", Bundle.EMPTY) }
+        until { PlaybackService.status.value.trackId == null }
     }
     @Test fun carStopClearsRadioQueueAndAllowsFreshPlayback() {
         connect()
-        main { controller.transportControls.playFromMediaId("radio|RANDOM_ALBUM", Bundle.EMPTY) }
-        until { PlaybackService.status.value.playing && PlaybackService.status.value.radio }
+        main { controller.transportControls.playFromMediaId(CarCatalog.SHUFFLE_ALL, Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing }
         main { controller.transportControls.stop() }
         until { !PlaybackService.status.value.playing && PlaybackService.status.value.trackId == null }
         assertFalse(PlaybackService.status.value.radio)

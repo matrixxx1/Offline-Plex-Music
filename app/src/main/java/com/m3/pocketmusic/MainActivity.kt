@@ -46,6 +46,7 @@ import androidx.media3.session.SessionToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
     val message by vm.message.collectAsStateWithLifecycle()
     val playing by PlaybackService.status.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableStateOf("Library") }
+    var tab by rememberSaveable { mutableStateOf("Offline") }
     var playlistDownload by remember { mutableStateOf(false) }
     var downloadPlaylistId by remember { mutableStateOf<String?>(null) }
     var search by remember { mutableStateOf("") }
@@ -136,8 +137,9 @@ class MainActivity : ComponentActivity() {
     val deletions = remember(state.tracks) { state.tracks.filter { it.pendingDeletion } }
     val now = index?.byId?.get(playing.trackId)
 
+    UpdatePrompt { vm.message.value = it }
     Scaffold(bottomBar = {
-        if (now != null && tab != "Now playing") NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true }, { removeDownloadIds = setOf(now.id) }, { vm.flagDeletion(setOf(now.id), !now.pendingDeletion) }, !busy, { tab = "Now playing" })
+        if (now != null && tab != "Now playing" && tab != "Offline") NowPlaying(now, playing, controller, { ratingIds = setOf(now.id) }, { showQueue = true }, { removeDownloadIds = setOf(now.id) }, { vm.flagDeletion(setOf(now.id), !now.pendingDeletion) }, !busy, { tab = "Now playing" })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -145,10 +147,11 @@ class MainActivity : ComponentActivity() {
                     Text(APP_NAME, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, letterSpacing = 0.5.sp, fontWeight = FontWeight.Bold)
                     Text(if (tab == "Library") playlist?.name ?: "Your listening room" else tab, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                AssistChip(onClick = { vm.settings(offline = !state.offline) }, label = { Text(if (state.offline) "Offline" else "Online") })
+                if (tab == "Offline") TextButton(onClick = { tab = "Library" }) { Text("Library & setup") }
+                else AssistChip(onClick = { vm.settings(offline = !state.offline) }, label = { Text(if (state.offline) "Offline" else "Online") })
             }
-            val tabs = listOf("Library", "Playlists", "Now playing", "Selected playlist", "Plex", "Downloads", "Settings")
-            PrimaryScrollableTabRow(selectedTabIndex = tabs.indexOf(tab), edgePadding = 0.dp, divider = {}) {
+            val tabs = listOf("Offline", "Library", "Playlists", "Now playing", "Selected playlist", "Plex", "Downloads", "Settings")
+            if (tab != "Offline") PrimaryScrollableTabRow(selectedTabIndex = tabs.indexOf(tab), edgePadding = 0.dp, divider = {}) {
                 tabs.forEach { name -> Tab(selected = tab == name, onClick = { tab = name }, text = { Text(name) }, modifier = Modifier.testTag("tab-$name")) }
             }
             if (busy || state.downloads.any { it.state == "Downloading" }) {
@@ -164,6 +167,8 @@ class MainActivity : ComponentActivity() {
             }
             if (playing.error.isNotBlank() && now == null) Text(playing.error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             when (tab) {
+                "Offline" -> OfflineScreen(state, now, playing, controller, busy,
+                    { action -> play(action) }, vm::scan, { folderPicker.launch(null) }, { tab = "Settings" })
                 "Now playing" -> NowPlayingScreen(now, playing, controller, busy,
                     { now?.let { ratingIds = setOf(it.id) } }, { now?.let { removeDownloadIds = setOf(it.id) } },
                     { now?.let { vm.flagDeletion(setOf(it.id), !it.pendingDeletion) } }, { showSync = true }, { tab = "Playlists" })
@@ -317,6 +322,80 @@ class MainActivity : ComponentActivity() {
     }, confirmButton = { TextButton(onClick = { showQueue = false }) { Text("Close") } })
 }
 
+@Composable private fun OfflineScreen(state: LibraryState, now: Track?, playing: Playing, controller: MediaController?, busy: Boolean,
+    play: (() -> Unit) -> Unit, scan: () -> Unit, chooseFolder: () -> Unit, settings: () -> Unit) {
+    var shuffleSeed by rememberSaveable { mutableIntStateOf(Random.nextInt()) }
+    val available = remember(state.tracks) { state.tracks.filter { it.downloaded } }
+    val queue = remember(available, shuffleSeed) { available.shuffled(Random(shuffleSeed)) }
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (available.isEmpty()) {
+            Spacer(Modifier.weight(1f))
+            Icon(painterResource(R.drawable.ic_note), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
+            Text("No offline music yet", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp))
+            Text("Choose or scan your music folder. Plex downloads and your own audio files will appear here.",
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(18.dp))
+            if (state.folder.isBlank()) Button(onClick = chooseFolder, enabled = !busy) { Text("Choose music folder") }
+            else Button(onClick = scan, enabled = !busy) { Text("Scan music folder") }
+            TextButton(onClick = settings) { Text("Offline settings") }
+            Spacer(Modifier.weight(1f))
+            return@Column
+        }
+
+        Card(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (now != null) AlbumArt(now, Modifier.size(128.dp)) else Icon(painterResource(R.drawable.ic_music), null,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(96.dp))
+                Text(now?.title ?: "Ready to shuffle", fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
+                Text(now?.artist ?: "${available.size} songs on this device", color = MaterialTheme.colorScheme.secondary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { controller?.seekToPreviousMediaItem() }, enabled = controller?.hasPreviousMediaItem() == true) {
+                        Icon(painterResource(R.drawable.ic_previous), "Previous song", modifier = Modifier.size(34.dp))
+                    }
+                    FilledIconButton(onClick = {
+                        if (controller?.isPlaying == true) controller.pause()
+                        else if (controller != null && controller.mediaItemCount > 0) { controller.prepare(); controller.play() }
+                        else play { PlaybackService.instance?.playTracks(queue) }
+                    }, modifier = Modifier.size(64.dp)) {
+                        if (playing.playing) Icon(painterResource(R.drawable.ic_pause), "Pause", modifier = Modifier.size(34.dp))
+                        else Icon(Icons.Default.PlayArrow, "Play", modifier = Modifier.size(38.dp))
+                    }
+                    IconButton(onClick = { controller?.seekToNextMediaItem() }, enabled = controller?.hasNextMediaItem() == true) {
+                        Icon(painterResource(R.drawable.ic_next), "Next song", modifier = Modifier.size(34.dp))
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Shuffled offline queue", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                val nextSeed = Random.nextInt()
+                val nextQueue = available.shuffled(Random(nextSeed))
+                shuffleSeed = nextSeed
+                play { PlaybackService.instance?.playTracks(nextQueue) }
+            }) {
+                Icon(painterResource(R.drawable.ic_shuffle), null); Text(" Reshuffle")
+            }
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+            itemsIndexed(queue, key = { index, track -> "$index:${track.id}" }) { index, track ->
+                Row(Modifier.fillMaxWidth().clickable { play { PlaybackService.instance?.playTracks(queue, index) } }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${index + 1}", color = MaterialTheme.colorScheme.secondary, modifier = Modifier.width(34.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(track.title, fontWeight = if (track.id == now?.id) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(track.artist, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = scan, enabled = !busy && state.folder.isNotBlank()) { Text("Scan folder") }
+            TextButton(onClick = settings) { Text("Settings") }
+        }
+    }
+}
+
 @Composable private fun DropChoice(label: String, options: List<String>, choose: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box { TextButton(onClick = { expanded = true }) { Text("$label ▾") }
@@ -399,9 +478,9 @@ private fun time(ms: Long): String = "%d:%02d".format(ms.coerceAtLeast(0) / 60_0
         TextButton(onClick = discard, enabled = !busy && state.tracks.any { it.pendingRating != null }) { Text("Discard queued Plex ratings") }
         HorizontalDivider()
         Text("Android Auto", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-        Text("Connect your phone to Android Auto and open Offline Plex music. Browse Library, Downloads, Playlists, or Radio. Radio uses your 2 Track limit setting. Car rating buttons save ratings until you sync on your phone.", fontSize = 13.sp)
+        Text("Connect your phone to Android Auto, open Offline Plex music, and choose Shuffle offline music. The car gets only downloaded or scanned songs plus its standard previous, play/pause, and next controls.", fontSize = 13.sp)
         Text("For this GitHub APK, enable Unknown sources in Android Auto’s developer settings if the app is missing from the car launcher. Complete Plex sign-in, imports, and download setup on your phone before driving.", fontSize = 13.sp)
-        Text("Offline Plex music 0.11.0 • Original-quality streaming and downloads. Album art is cached as you browse and play, including for offline use; Android may evict the cache when storage is low.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
+        Text("Offline Plex music 0.12.0 • Checks GitHub for updates when opened and installs only after you approve. Original-quality streaming and downloads.", fontSize = 11.sp, modifier = Modifier.padding(bottom = 20.dp))
     }
 }
 @Composable private fun EmptyCard(title: String, body: String) {

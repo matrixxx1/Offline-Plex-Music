@@ -44,6 +44,19 @@ class MusicInstrumentedTest {
             Track("remote:3", "Night Drive", "Afterglow", "City Lights", remoteKey = "3", part = "/test.wav", genres = listOf("Electronic"))
         )) }
         compose.waitUntil(5000) { compose.onAllNodesWithText("Open Road").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Library & setup").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Artists", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+    }
+    @Test fun offlineScreenIsSimpleAndUsesAShuffledLocalQueue() {
+        compose.onNodeWithTag("tab-Offline").performScrollTo().performClick()
+        compose.onNodeWithText("Shuffled offline queue").assertIsDisplayed()
+        compose.onNodeWithText("2 songs on this device").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Play").performClick()
+        compose.waitUntil(15_000) { PlaybackService.status.value.playing }
+        assertTrue(PlaybackService.status.value.trackId in setOf("local:1", "local:2"))
+        compose.onNodeWithContentDescription("Pause").performClick()
+        compose.onNodeWithText("Reshuffle").assertIsDisplayed()
+        screenshot("offline-simple-player")
     }
     @Test fun downloadControlsStayResponsiveWhileLargeLibraryWriterIsBlocked() {
         val tracks = (1..31_382).map { Track("load:$it", "Song $it", "Artist ${it % 25}", "Album", remoteKey = "$it", part = "/audio/$it") }

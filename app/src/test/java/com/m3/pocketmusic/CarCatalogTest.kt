@@ -8,15 +8,14 @@ class CarCatalogTest {
     private val b = a.copy(id = "plex:2", title = "Second", number = 2, localUri = "", genres = listOf("Rock"))
     private val own = Track("local:3", "Own song", "Beyoncé / AC|DC", "Local", localUri = "content://music/3")
     private val state = LibraryState(tracks = listOf(b, own, a), playlists = listOf(Playlist("p|one", "My playlist", listOf(b.id, a.id))))
-    @Test fun rootHasFourBrowsableCategoriesAndRadioHasAllModes() {
+    @Test fun rootIsOneSimpleOfflineShuffleAction() {
         val c = CarCatalog(state)
-        assertEquals(listOf("Library", "Playlists", "Downloads", "Radio"), c.children(CarCatalog.ROOT).map { it.title })
-        assertTrue(c.children(CarCatalog.ROOT).none { it.playable })
-        assertEquals(PlayMode.entries.toList(), c.children("radio").map { it.radio })
-        assertTrue(CarCatalog(state.copy(twoTrack = true)).children("radio").all { it.subtitle.contains("2 track") })
+        assertEquals(listOf("Shuffle offline music"), c.children(CarCatalog.ROOT).map { it.title })
+        assertTrue(c.children(CarCatalog.ROOT).single().playable)
+        assertEquals(setOf(a.id, own.id), c.queue(CarCatalog.SHUFFLE_ALL).tracks.map { it.id }.toSet())
     }
     @Test fun offlineCatalogSearchAndPlaylistsExcludeUndownloadedTracks() {
-        val c = CarCatalog(state.copy(offline = true))
+        val c = CarCatalog(state.copy(offline = false))
         assertEquals(setOf(a.id, own.id), c.children("tracks").map { it.track!!.id }.toSet())
         assertTrue(c.search("Second").isEmpty())
         val playlist = c.children("playlists").single()
@@ -27,13 +26,13 @@ class CarCatalogTest {
         val c = CarCatalog(state)
         assertEquals(setOf(a.id, own.id), c.children("downloads").map { it.track!!.id }.toSet())
         assertEquals(2, c.children("genres").size)
-        assertEquals(listOf(a.id, b.id), c.children(c.children("genres").first { it.title.equals("rock", true) }.id).map { it.track!!.id })
+        assertEquals(listOf(a.id), c.children(c.children("genres").first { it.title.equals("rock", true) }.id).map { it.track!!.id })
     }
     @Test fun playlistSelectionPreservesOrderAndStartIndex() {
         val c = CarCatalog(state)
         val children = c.children(c.children("playlists").single().id)
         val q = c.queue(children.last().id)
-        assertEquals(listOf(b.id, a.id), q.tracks.map { it.id }); assertEquals(1, q.start)
+        assertEquals(listOf(a.id), q.tracks.map { it.id }); assertEquals(0, q.start)
         assertEquals(a, c.item(children.last().id)!!.track)
     }
     @Test fun opaqueIdsRoundTripUnicodeAndSeparators() {

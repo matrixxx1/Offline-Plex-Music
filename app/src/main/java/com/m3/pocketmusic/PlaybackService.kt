@@ -25,7 +25,6 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionCommand
-import androidx.media3.session.CommandButton
 import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -48,7 +47,6 @@ class PlaybackService : MediaLibraryService() {
     private var sequence: List<Track> = emptyList()
     private var sequencePosition = 0
     private var radio = false
-    private var moreCarActions = false
     private var removingIds: Set<String> = emptySet()
     private var scopeIds: Set<String>? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -65,7 +63,7 @@ class PlaybackService : MediaLibraryService() {
         player.setWakeMode(C.WAKE_MODE_LOCAL)
         session = MediaLibrarySession.Builder(this, object : ForwardingPlayer(player) {
             override fun stop() { stopPlayback() }
-        }, CarCallback()).setCustomLayout(carButtons()).setMediaButtonPreferences(carButtons()).setSessionActivity(PendingIntent.getActivity(this, 0,
+        }, CarCallback()).setSessionActivity(PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build()
         player.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
@@ -158,26 +156,8 @@ class PlaybackService : MediaLibraryService() {
         config = musicStore.credentials.read()
         http.setDefaultRequestProperties(mapOf("X-Plex-Token" to config.token))
     }
-    private fun carButtons(): List<CommandButton> {
-        val track = musicStore.state.value.tracks.find { it.id == player.currentMediaItem?.mediaId }
-        fun button(icon: Int, resource: Int, label: String, action: String) = CommandButton.Builder(icon)
-            .setIconResId(resource).setDisplayName(label).setSlots(CommandButton.SLOT_OVERFLOW)
-            .setSessionCommand(SessionCommand(action, Bundle.EMPTY)).build()
-        val more = button(CommandButton.ICON_UNDEFINED, R.drawable.ic_more, if (moreCarActions) "Back to playback actions" else "More song actions", MORE_ACTIONS)
-        return if (!moreCarActions) listOf(
-            button(CommandButton.ICON_SHUFFLE_ON, R.drawable.ic_shuffle, "Shuffle playlist", SHUFFLE),
-            button(CommandButton.ICON_STAR_FILLED, R.drawable.ic_star, "Rating ${track?.rating ?: 0}/5 · tap for next rating", RATE_CYCLE),
-            button(CommandButton.ICON_NEXT, R.drawable.ic_next, "Next artist in playlist", NEXT_ARTIST), more
-        ) else listOf(
-            button(CommandButton.ICON_UNDEFINED, R.drawable.ic_delete, if (track?.pendingDeletion == true) "Unflag Plex deletion" else "Flag Plex deletion on sync", FLAG_DELETE),
-            button(CommandButton.ICON_UNDEFINED, R.drawable.ic_delete, "Delete downloaded copy", DELETE_LOCAL),
-            button(CommandButton.ICON_STOP, R.drawable.ic_stop, "Stop playback", STOP), more
-        )
-    }
-    private fun updateCarButtons() {
-        session?.setCustomLayout(carButtons())
-        session?.setMediaButtonPreferences(carButtons())
-    }
+    // Android Auto intentionally gets only its standard previous/play-pause/next transport UI.
+    private fun updateCarButtons() = Unit
     private fun playlistSequence(): List<Track> = if (sequence.isNotEmpty()) sequence else
         (0 until player.mediaItemCount).mapNotNull { i -> musicStore.state.value.tracks.find { it.id == player.getMediaItemAt(i).mediaId } }
     fun shufflePlaylist() { playTracks(playlistSequence().shuffled()) }
@@ -309,7 +289,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(SessionCommand(STOP, Bundle.EMPTY)).add(SessionCommand(RATE_ONE, Bundle.EMPTY)).add(SessionCommand(RATE_FIVE, Bundle.EMPTY))
                 .add(SessionCommand(SHUFFLE, Bundle.EMPTY)).add(SessionCommand(NEXT_ARTIST, Bundle.EMPTY))
                 .add(SessionCommand(RATE_CYCLE, Bundle.EMPTY)).add(SessionCommand(FLAG_DELETE, Bundle.EMPTY))
-                .add(SessionCommand(DELETE_LOCAL, Bundle.EMPTY)).add(SessionCommand(MORE_ACTIONS, Bundle.EMPTY)).build()
+                .add(SessionCommand(DELETE_LOCAL, Bundle.EMPTY)).build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller).setAvailableSessionCommands(commands)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS).build()
         }
@@ -361,10 +341,6 @@ class PlaybackService : MediaLibraryService() {
         }
         override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
             if (customCommand.customAction == STOP) { stopPlayback(); return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS)) }
-            if (customCommand.customAction == MORE_ACTIONS) {
-                moreCarActions = !moreCarActions; updateCarButtons()
-                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-            }
             val track = musicStore.state.value.tracks.find { it.id == player.currentMediaItem?.mediaId }
                 ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
             when (customCommand.customAction) {
