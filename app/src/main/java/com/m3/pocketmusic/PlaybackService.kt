@@ -25,6 +25,7 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.CommandButton
 import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -63,7 +64,7 @@ class PlaybackService : MediaLibraryService() {
         player.setWakeMode(C.WAKE_MODE_LOCAL)
         session = MediaLibrarySession.Builder(this, object : ForwardingPlayer(player) {
             override fun stop() { stopPlayback() }
-        }, CarCallback()).setSessionActivity(PendingIntent.getActivity(this, 0,
+        }, CarCallback()).setCustomLayout(carButtons()).setMediaButtonPreferences(carButtons()).setSessionActivity(PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build()
         player.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
@@ -156,8 +157,20 @@ class PlaybackService : MediaLibraryService() {
         config = musicStore.credentials.read()
         http.setDefaultRequestProperties(mapOf("X-Plex-Token" to config.token))
     }
-    // Android Auto intentionally gets only its standard previous/play-pause/next transport UI.
-    private fun updateCarButtons() = Unit
+    private fun carButtons(): List<CommandButton> {
+        val track = musicStore.state.value.tracks.find { it.id == player.currentMediaItem?.mediaId }
+        val canDelete = track?.downloaded == true && musicStore.state.value.downloads.none { it.id == track.id }
+        return listOf(CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+            .setCustomIconResId(R.drawable.ic_delete)
+            .setDisplayName("Delete song from device")
+            .setEnabled(canDelete)
+            .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW)
+            .setSessionCommand(SessionCommand(DELETE_LOCAL, Bundle.EMPTY)).build())
+    }
+    private fun updateCarButtons() {
+        session?.setCustomLayout(carButtons())
+        session?.setMediaButtonPreferences(carButtons())
+    }
     private fun playlistSequence(): List<Track> = if (sequence.isNotEmpty()) sequence else
         (0 until player.mediaItemCount).mapNotNull { i -> musicStore.state.value.tracks.find { it.id == player.getMediaItemAt(i).mediaId } }
     fun shufflePlaylist() { playTracks(playlistSequence().shuffled()) }

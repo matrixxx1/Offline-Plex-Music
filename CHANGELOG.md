@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add a single Android Auto **Delete song from device** action. It permanently removes the current local file and automatically advances playback to the next queued song while retaining the standard transport controls.
+
 ## 0.12.0
 
 - Add a dedicated, default Offline screen with a freshly randomized on-device queue, current-song card, and only previous, play/pause, next, reshuffle, scan, and settings controls.

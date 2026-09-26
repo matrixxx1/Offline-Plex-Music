@@ -5,15 +5,17 @@ import android.content.ComponentName
 import android.content.Intent
 import android.media.browse.MediaBrowser
 import android.media.session.MediaController
+import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import androidx.media3.common.MediaItem
 import androidx.media3.session.SessionToken
+import androidx.documentfile.provider.DocumentFile
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
@@ -35,17 +37,27 @@ class CarIntegrationTest {
     @Before fun seed() {
         main { context.stopService(Intent(context, PlaybackService::class.java)) }
         until { PlaybackService.instance == null }
-        val wav = File(context.filesDir, "car-test.wav")
         val samples = 44_100 * 30
         val bytes = ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN)
         bytes.put("RIFF".toByteArray()); bytes.putInt(36 + samples * 2); bytes.put("WAVEfmt ".toByteArray())
         bytes.putInt(16); bytes.putShort(1); bytes.putShort(1); bytes.putInt(44_100); bytes.putInt(88_200)
         bytes.putShort(2); bytes.putShort(16); bytes.put("data".toByteArray()); bytes.putInt(samples * 2)
-        wav.writeBytes(bytes.array())
+        val tree = DocumentsContract.buildTreeDocumentUri("com.m3.pocketmusic.test.documents", "root")
+        context.sendBroadcast(Intent().setComponent(ComponentName("com.m3.pocketmusic.test", "com.m3.pocketmusic.TestFolderGrant")))
+        until { context.checkCallingOrSelfUriPermission(tree, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED }
+        val folder = DocumentFile.fromTreeUri(context, tree)!!
+        folder.listFiles().forEach { it.delete() }
+        fun wav(name: String): String {
+            val document = folder.createFile("audio/wav", name)!!
+            context.contentResolver.openOutputStream(document.uri)!!.use { it.write(bytes.array()) }
+            return document.uri.toString()
+        }
+        val firstUri = wav("car-test-a.wav")
+        val secondUri = wav("car-test-b.wav")
         store.credentials.save(PlexConfig())
         store.update { LibraryState(tracks = listOf(
-            Track("car-a", "First car song", "Car artist", "Car album", number = 1, duration = 30_000, remoteKey = "1", localUri = wav.toURI().toString()),
-            Track("car-b", "Second car song", "Car artist", "Car album", number = 2, duration = 30_000, localUri = wav.toURI().toString()),
+            Track("car-a", "First car song", "Car artist", "Car album", number = 1, duration = 30_000, remoteKey = "1", localUri = firstUri),
+            Track("car-b", "Second car song", "Car artist", "Car album", number = 2, duration = 30_000, localUri = secondUri),
             Track("car-c", "Streaming only", "Remote artist", part = "/audio/3", remoteKey = "3")
         ), playlists = listOf(Playlist("car-list", "Driving", listOf("car-b", "car-a")))) }
     }
@@ -105,12 +117,20 @@ class CarIntegrationTest {
         main { controller.transportControls.stop() }
         until { !PlaybackService.status.value.playing }
     }
-    @Test fun legacyCarKeepsTheShuffledQueueOfflineAndHidesCustomActions() {
+    @Test fun legacyCarDeleteActionRemovesTheCurrentFileAndSkipsToTheNextSong() {
         connect()
         main { controller.transportControls.playFromMediaId(CarCatalog.SHUFFLE_ALL, Bundle.EMPTY) }
         until { PlaybackService.status.value.playing }
-        assertTrue(controller.playbackState?.customActions.orEmpty().isEmpty())
         assertEquals(setOf("car-a", "car-b"), controller.queue!!.map { it.description.mediaId }.toSet())
+        val deletedId = PlaybackService.status.value.trackId!!
+        val deletedUri = store.state.value.tracks.single { it.id == deletedId }.localUri
+        val nextId = if (deletedId == "car-a") "car-b" else "car-a"
+        fun actions() = controller.playbackState?.customActions.orEmpty()
+        until { actions().any { it.action == PlaybackService.DELETE_LOCAL } }
+        assertEquals("Delete song from device", actions().single { it.action == PlaybackService.DELETE_LOCAL }.name.toString())
+        main { controller.transportControls.sendCustomAction(PlaybackService.DELETE_LOCAL, Bundle.EMPTY) }
+        until { PlaybackService.status.value.playing && PlaybackService.status.value.trackId == nextId }
+        until { DocumentFile.fromSingleUri(context, Uri.parse(deletedUri))?.exists() != true && store.state.value.tracks.none { it.id == deletedId && it.downloaded } }
     }
     @Test fun legacyVoiceSearchOnlyUsesDownloadedMusic() {
         connect()
